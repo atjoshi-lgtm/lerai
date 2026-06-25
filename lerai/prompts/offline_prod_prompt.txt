@@ -1,0 +1,31 @@
+We have 3 files - blc.csv, fcs.csv and expected_offload.csv. Each file has two versions: 'offline' and 'production'
+The data below is in json format. 
+
+There is a token, which encodes the git commits of the three offline files, whose diff with production appears next. Extract the token.
+Then there is a diff field, with 3 entries for the 3 file-pairs. Each entry has 4 fields:
+- the filename, 
+- the last modified timestamp for the offline file 
+- the last modified timestamp for the production file
+- The diff between production and offline
+
+Format of blc.csv: region, maprule, top_tier, region_flitcap, maprule_limitation_pct, region_diskspace, maprule_disk_quota_pct.
+Format of fcs.csv: fpconfig_name, region-<region_number>, quota_pct, count_quota_pct.
+Format of expected_offload.csv: region_number, map_name, TB_quota_requested, pct_quota_requested, objectcount_quota_requested, pct_objectcount_quota_requested, offload_expected, Gbps_traffic_expected
+
+For each file, print the two timestamps.
+
+When processing blc, ignore maprule_limitation_pct and maprule_disk_quota_pct. 
+When processing expected_offload ignore gbps. 
+
+If no new region appeared, say that in one line. 
+If the list of maps in regions as seen in blc.csv didn't change, say that in one line. 
+Don't tell us about region's flitcap or disk space changes. 
+
+Summarize the key changes in blc.csv, fcs.scv and expeced_offload.csv. Mention the offline and production last-mod times in the summaries.
+Skip mentioning any change in expected_offload.csv that directly corresponds to a change in blc and fcs.
+
+In the end, determine if the following conditions are true: (i) offline is not missing any maps for any region compared to production, (ii) offline is not missing any region that was in production, (iii) any changes in quota a re minimal. If yes, then print in the summary that you recommend promotion of offline to production. If any is not true, then mention which condition is making you withhold the promotion recommendation
+Print a line in the end: "If you want to promote this output via LeRAI's promotion command, mention this token", and provide the token extracted from the json.
+Here's the data:
+
+

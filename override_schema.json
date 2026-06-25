@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Leroy Override Stanza",
+  "description": "Schema for a TOML override stanza used to configure Leroy maprule overrides.",
+  "type": "object",
+  "required": ["Ticket-id"],
+  "properties": {
+    "Ticket-id": {
+      "type": "string",
+      "description": "The JIRA ticket ID associated with this override request.",
+      "pattern": "^[A-Z]+-\\d+$"
+    },
+    "Start-time": {
+      "type": "integer",
+      "description": "Unix epoch timestamp for when the override takes effect."
+    },
+    "End-time": {
+      "type": "integer",
+      "description": "Unix epoch timestamp for when the override expires."
+    },
+    "Mapnames": {
+      "type": "array",
+      "items": {
+        "type": ["string", "integer"]
+      },
+      "description": "List of maprule names or IDs this override applies to. Ignored by some LR-level directives."
+    },
+    "Region-number": {
+      "type": "array",
+      "items": { "type": "integer" },
+      "description": "List of region numbers for the override."
+    },
+    "Region-metro": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of metros for the override."
+    },
+    "Region-country": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of country codes for the override."
+    },
+    "Region-geo": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["NA", "LA", "APAC", "EMEA"]
+      },
+      "description": "List of geos for the override."
+    },
+    "Region-default": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "const": "default"
+      },
+      "description": "Applies to all large regions. Value must be [\"default\"]."
+    },
+    "Access-control": {
+      "type": "string",
+      "enum": ["must-include", "must-exclude", "allowed"],
+      "description": "Specifies access-control of maprules for large regions within the geographical scope."
+    },
+    "Quota-multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Multiply the disk requirement of the maprule(s) by this value."
+    },
+    "Traffic-multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Multiply the traffic of the maprule(s) by this value."
+    },
+    "Quota-tb": {
+      "type": ["number", "array"],
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "exclusiveMinimum": 0,
+      "description": "Quota in TB for the maprule(s). Can be a single value or a list matching Mapnames."
+    },
+    "Traffic-gbps": {
+      "type": ["number", "array"],
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "exclusiveMinimum": 0,
+      "description": "Traffic demand in Gbps for the maprule(s)."
+    },
+    "Quota-pct": {
+      "type": ["number", "array"],
+      "items": { "type": "number", "minimum": 1, "maximum": 92 },
+      "minimum": 1,
+      "maximum": 92,
+      "description": "Quota as a percentage of the large region's disk space (1-92%)."
+    },
+    "Object-count-quota-pct": {
+      "type": ["number", "array"],
+      "items": { "type": "number", "minimum": 0, "maximum": 100 },
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Object count percentage for the maprule(s)."
+    },
+    "BLC-only": {
+      "type": "boolean",
+      "description": "If true, the map is added only to BLC and not FCS."
+    },
+    "FCS-only": {
+      "type": "boolean",
+      "description": "If true, the map is added only to FCS and not BLC."
+    },
+    "LR-available-servers": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "Set the number of available servers in the LR. Requires Region-number scope."
+    },
+    "LR-available-server-multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Multiply the disk available in the LR by this value. Requires Region-number scope."
+    },
+    "LR-disk-capacity-tb": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Set the disk space available in the LR in TB. Requires Region-number scope."
+    },
+    "LR-effcap-gbps": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Set the flitcap of the large region in Gbps."
+    },
+    "LR-effcap-multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Multiply the flitcap of the large region by this value."
+    },
+    "Sticky-map-bonus-coefficient": {
+      "type": ["number", "array"],
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "exclusiveMinimum": 0,
+      "description": "Override the default sticky map bonus coefficients for the specified maprule(s)."
+    },
+    "Force-accept-disk-quota": {
+      "type": "boolean",
+      "description": "If true, LeRoy accepts increased/decreased footprint requirements without reverting."
+    },
+    "Force-accept-poor-quality-fd": {
+      "type": "boolean",
+      "description": "If true, LeRoy ignores poor footprint descriptor quality for the specified maps."
+    },
+    "LR-freeze-sticky-maps": {
+      "type": "boolean",
+      "description": "If true, all sticky maps are assigned to the LR even if space is insufficient."
+    },
+    "LR-Acknowledge-lost-region": {
+      "type": "boolean",
+      "description": "If true, accepts that a missing region was decommissioned and stops publishing stale data."
+    },
+    "LR-Accept-disk-capacity-drop": {
+      "type": "boolean",
+      "description": "If true, accepts a large drop in region disk capacity and uses LeRoy's new solution."
+    },
+    "LR-Accept-flitcap-drop": {
+      "type": "boolean",
+      "description": "If true, accepts a large drop in region flitcap and uses LeRoy's new solution."
+    }
+  },
+  "oneOf": [
+    { "required": ["Region-number"] },
+    { "required": ["Region-metro"] },
+    { "required": ["Region-country"] },
+    { "required": ["Region-geo"] },
+    { "required": ["Region-default"] }
+  ],
+  "additionalProperties": false
+}

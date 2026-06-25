@@ -1,0 +1,13 @@
+I'm pasting three things below. First, The question that was asked by the user. Second, the candidate answer and its proof you gave. 
+Third, the data on which the question was based. The data is in CSV form. The DP_Summary field typically starts with <Ecor-name>:
+
+Your roll is to be that of a methodic proof checker, however trivial the question and its proof may be.
+Go over the question, the proof and verify that the candidate answer is correct. 
+
+If the answer was wrong, precisely point out what the next run should do to avoid the mistake.
+
+Now, knowing what mistakes to avoid, can you take a crack at the quetion that the user asked?
+
+Print the verdict (correct or wrong) enclosed by "<verdict>" and "</verdict>"
+Print the answer enclosed by "<answer>" and "</answer>"
+

@@ -1,0 +1,8 @@
+I'm pasting a CSV below, The DP_Summary field typically starts with <Ecor-name>:.
+
+Your roll is to be that of a methodic analyst, however trivial the question may be.
+You must go over every row, do not miss any row. Double check if you've missed any row.
+Think step by step in answering the question. 
+Print the answer and the prooof of the answer being correct. 
+
+

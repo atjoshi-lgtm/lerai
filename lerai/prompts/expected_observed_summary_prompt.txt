@@ -1,0 +1,67 @@
+I’m going to paste two CSV. 
+The first has columns: region,map,gbps, observed_offload,expected_offload
+The second has columns: region,egress_MB, midgress_MB.
+
+Please analyze it and produce a brief, prioritized summary with the following sections, following these rules:
+
+Section 1 – Regions with problems across most maps (highest priority)
+
+First, look at the second csv. 
+For all the regions, calulate their miss-rate = midgress_MB*100.0/egress_MB.
+Print three lines: 
+First with a list of "good" regions, where miss rate <15%. 
+Second with a list of "underperforming" regions, where miss rate >=15% and < 25%
+Third with a list of "bad" regons, where miss rate >=25%. 
+Show region(offload%). 
+
+The regions in the first line are not considered problem regions. The others have some level of problem.
+
+Now, look at the first CSV. 
+identify regions that have data quality issues (all missing expected offload value). These regions should not be considered as problem regions.
+Do not display these regions. 
+
+Identify regions where multiple maps show clear underperformance:
+Treat a row as underperforming if expected_offload is present and
+observed_offload ≤ 0.9* expected_offload (10% deviation from than expectation is allowed), 
+and gbps is non-trivial (de‑emphasize very low-traffic rows).
+List only regions that have broad issues (several important maps underperforming), not regions with just a couple of bad maps. Show traffic and offload for the bad maps picked for display.
+Separately, list any regions where expected_offload is missing for all maps; label these as data coverage issues rather than performance issues.
+
+
+Section 2 – Maps with problems across many regions 
+Look at the first CSV. 
+Identify maps that are systemically bad: they underperform (same threshold as above) in many different regions at non-trivial gbps.
+
+Section 3 - Maps with poor data
+Look at the first CSV. 
+Identify maps with poor or sparse expected_offload data:
+Maps where expected_offload is missing in most rows.
+Maps that only have expected_offload in a few regions.
+For these, list the regions where expectations exist and briefly say whether they are clearly bad, clearly good, or mixed. Show traffic and offload for the regions picked.
+Do not repeat region-level data gaps already mentioned in Section 1.
+
+Section 4 - Maps with severe problems in a specific regions
+Look at the first CSV.
+Identify maps that are not listed under the systemically bad ones, but those that underperform (same threshold as above) in a few different regions at non-trivial gbps.
+
+Section 5 – Maps doing well (no broad issues)
+Look at the first CSV.
+Make a list of all the maps seen in the csv file. 
+Exclude from this section any map that:
+  - Was already called systemically bad,
+  - Was called partially problematic, or
+  - Was identified as having mostly missing/sparse expected_offload.
+  - Rest all the maps must appear in this section. 
+
+
+General instructions
+
+Keep the entire summary concise and accurate. Use short bullets, not long narratives.
+Use the same underperformance rule throughout:
+observed_offload ≤ expected_offload * 0.9 with non-trivial gbps.
+Treat rows with very low gbps as low priority signal; focus on rows where traffic is meaningful relative to the dataset.
+If a region or map has broad issues, it must not be described as “mixed” or “doing well” elsewhere.
+If a map has mostly missing expected_offload, it belongs in Section 3 (poor data), not in the “doing well” section.
+At the end, output only the five sections with clear headings and short bullet points.
+
+

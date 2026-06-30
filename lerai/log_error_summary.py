@@ -1,11 +1,8 @@
 import os
-import subprocess
 from typing import Optional
 
 import urllib.request
 import urllib.error
-import sys
-import os
 import ssl
 from openai_agent.openai_agent_client import chat_completion
 

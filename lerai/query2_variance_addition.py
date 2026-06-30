@@ -1,6 +1,8 @@
 import os
 import ast
 import ssl
+import json
+import urllib.parse
 import urllib.request
 
 
@@ -10,10 +12,6 @@ RUN_QUERY2_URL = os.environ.get("RUN_QUERY2_URL")
 
 cert_path = os.environ.get("CERT_PATH")
 key_path = os.environ.get("KEY_PATH")
-
-
-import json
-import ast
 
 def handle_response(resp_str: str, silent: bool = True) -> str:
     data = json.loads(resp_str)

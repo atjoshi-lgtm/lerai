@@ -570,6 +570,7 @@ Prompt files live under `lerai/prompts/`.
 ## Tests and No-Server Validation
 
 For a detailed explanation of every current test, see `docs/TEST_GUIDE.md`.
+For the first live-server access window, see `docs/SERVER_ACCESS_NEXT_STEPS.md`.
 
 Current tests:
 

@@ -1,11 +1,16 @@
 import os
 import time
+import logging
 from webexteamssdk import WebexTeamsAPI
 from csv_env_diff import compare_offline_vs_production
 from log_error_summary import get_airflow_error_summary
 from expected_observed_comparison import run_offload_analysis_workflow
 from query2_variance_addition import check_query2_for_variance_addition
 from quota_exceed import check_query2_for_quota_exceed
+from lerai.logging_utils import redact_value
+
+
+logger = logging.getLogger(__name__)
 
 
 # ── Bot setup ─────────────────────────────────────────────────────────────
@@ -23,9 +28,8 @@ def send_daily_csv_diff_report():
     - In both cases: also collects and summarizes Airflow ERROR logs and appends to the message.
     """
 
-    #print(f"\n\n\ntoken = {webex_token}, space_id = {space_id}\n\n\n")
     if not webex_token or not space_id:
-        print("Daily job: WEBEX_ACCESS_TOKEN or WEBEX_SPACE_ID not set; skipping.")
+        logger.warning("Daily CSV job skipped because WEBEX_ACCESS_TOKEN or WEBEX_SPACE_ID is not set")
         return
 
     api = WebexTeamsAPI(access_token=webex_token)
@@ -45,7 +49,7 @@ def send_daily_csv_diff_report():
             f"Failed to run daily CSV comparison.\n\n"
             f"Error: `{e}`\n"
         )
-        print(f"Daily CSV job error: {e}")
+        logger.exception("Daily CSV job error")
 
     # Avoid OpenAI rate limit, sleep for 2s
     time.sleep(2)  
@@ -62,7 +66,7 @@ def send_daily_csv_diff_report():
             f"Failed to collect or summarize Airflow logs.\n\n"
             f"Error: `{e}`\n"
         )
-        print(f"Daily Airflow log job error: {e}")
+        logger.exception("Daily Airflow log job error")
 
     # ---- Combine sections and send one message ----
     full_message = (
@@ -79,9 +83,9 @@ def send_daily_offload_report():
     - just calls run_offload_analysis_workflow, which provides a GPT summary of expected/observed offload diff
     - If not null, sends it to the LR offload watch webex space
     """
-    print(f"\n\n\ntoken = {webex_token}, space_id = {offload_space_id}\n\n\n")
+    logger.info("Daily offload job starting", extra={"space_id": redact_value(offload_space_id)})
     if not webex_token or not offload_space_id:
-        print("Daily job: WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID not set; skipping.")
+        logger.warning("Daily offload job skipped because WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID is not set")
         return
 
     api = WebexTeamsAPI(access_token=webex_token)
@@ -101,7 +105,7 @@ def send_daily_offload_report():
             f"Failed to run daily expected-observed offload comparison.\n\n"
             f"Error: `{e}`\n"
         )
-        print(f"Daily offload job error: {e}")
+        logger.exception("Daily offload job error")
 
     api.messages.create(roomId=offload_space_id, markdown=section)
 
@@ -112,9 +116,9 @@ def send_daily_query2_variance_report():
     - just calls the query2 variance function, which provides a  summary of regions in need of variance
     - If not null, sends it to the LR OPs webex space
     """
-    print ("Running daily variance job")
+    logger.info("Daily Query2 variance job starting")
     if not webex_token or not space_id:
-        print("Daily Query2 Variance check job: WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID not set; skipping.")
+        logger.warning("Daily Query2 variance job skipped because WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID is not set")
         return
 
     section = ""
@@ -131,7 +135,7 @@ def send_daily_query2_variance_report():
             "❌ **Query2 Variance Watch**\n\n"
             f"Error: `{e}`\n"
         )
-        print(f"Daily query2 variance jpb error: {e}")
+        logger.exception("Daily Query2 variance job error")
 
     api = WebexTeamsAPI(access_token=webex_token)
     api.messages.create(roomId=offload_space_id, markdown=section)
@@ -143,9 +147,9 @@ def send_daily_quota_exceed_report():
     - just calls the query2 variance function, which provides a summary of regions where quotas are exceeded
     - If not null, sends it to the LR OPs webex space
     """
-    print ("Running daily quota exceed job")
+    logger.info("Daily quota exceed job starting")
     if not webex_token or not space_id:
-        print("Daily Quota exceed check job: WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID not set; skipping.")
+        logger.warning("Daily quota exceed job skipped because WEBEX_ACCESS_TOKEN or WEBEX_OFFLOAD_SPACE_ID is not set")
         return
 
     section = ""
@@ -162,7 +166,7 @@ def send_daily_quota_exceed_report():
             f"Failed to run daily exceeding quotas check.\n\n"
             f"Error: `{e}`\n"
         )
-        print(f"Daily exceeding quotas error: {e}")
+        logger.exception("Daily exceeding quotas error")
 
     api = WebexTeamsAPI(access_token=webex_token)
     api.messages.create(roomId=offload_space_id, markdown=section)

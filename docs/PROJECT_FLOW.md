@@ -61,6 +61,8 @@ Important modules under `lerai/`:
 | --- | --- |
 | `lerai/lerai_main.py` | Creates the Webex bot, registers commands, and starts the bot loop. |
 | `lerai/lerai_commands.py` | Defines all Webex command classes and delegates to workflow modules. |
+| `lerai/config.py` | Provides shared environment-variable parsing and validation helpers. |
+| `lerai/logging_utils.py` | Provides shared redaction and logging helpers for command and workflow diagnostics. |
 | `lerai/csv_env_diff.py` | Fetches offline/production diff output and asks the LLM to summarize it. |
 | `lerai/log_error_summary.py` | Fetches Airflow error logs and asks the LLM to summarize them. |
 | `lerai/expected_observed_comparison.py` | Fetches expected/observed offload data and asks the LLM to summarize it. |
@@ -567,6 +569,8 @@ Prompt files live under `lerai/prompts/`.
 
 ## Tests and No-Server Validation
 
+For a detailed explanation of every current test, see `docs/TEST_GUIDE.md`.
+
 Current tests:
 
 | File | What it checks |
@@ -575,11 +579,13 @@ Current tests:
 | `tests/test_query_response_parsing.py` | Query2 variance/quota parser behavior for empty and non-empty results. |
 | `tests/test_promote_security.py` | Deterministic promote parsing, signed approval token round trip, tamper rejection, expiry, and missing-secret behavior. |
 | `tests/test_dp_ama_state.py` | DP functions use request-scoped data and no longer expose `dplist_save`. |
+| `tests/test_config.py` | Shared configuration helper behavior for required, optional, integer, boolean, JSON, and file-based settings. |
+| `tests/test_logging_utils.py` | Redaction behavior for sensitive mapping keys, emails, bearer tokens, and inline secret assignments. |
 
 Useful no-server validation commands:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils
 python3 -m compileall .
 ```
 
@@ -597,5 +603,8 @@ A recent cleanup pass made the following static changes:
 - Hardened promotion approval tokens with HMAC signing and TTL validation, and replaced LLM-based `/promote` extraction with deterministic parsing.
 - Removed `DP_AMA.py` module-level `dplist_save` state in favor of request-scoped DP data.
 - Added no-server unit tests for promotion security and DP state isolation.
+- Added `lerai/config.py` with shared environment parsing helpers and tests.
+- Hardened Query2 variance/quota response parsing for malformed JSON, bad row shapes, corrected quota headers, and non-numeric quota values.
+- Added `lerai/logging_utils.py` and replaced active high-risk `print()` calls with structured logging and redaction.
 
 The code still needs broader architecture cleanup; see `docs/CODE_QUALITY_REVIEW.md`.

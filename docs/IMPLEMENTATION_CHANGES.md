@@ -222,8 +222,9 @@ python3 -m compileall .
 These are still open after this pass:
 
 1. Add centralized config validation for all environment variables and cert paths.
-2. Replace high-risk `print()` calls with structured logging and redaction.
-3. Add TOML parsing and schema validation for LeROY override generation.
-4. Add request correlation ids at command entry.
-5. Add retry wrappers for idempotent external service reads.
-6. Normalize package imports and remove the root `sys.path.insert` workaround when safe.
+2. Add TOML parsing and schema validation for LeROY override generation.
+3. Add request correlation ids at command entry.
+4. Add retry wrappers for idempotent external service reads.
+5. Normalize package imports and remove the root `sys.path.insert` workaround when safe.
+
+Structured logging and redaction were implemented in `docs/IMPLEMENTATION_CHANGES_LOGGING_REDACTION.md`.

@@ -10,9 +10,14 @@ import json
 import urllib.request
 import urllib.error
 import ssl
+import logging
 from pathlib import Path
 from openai_agent.openai_agent_client import responses
 from openai_agent.openai_agent_client import chat_completion
+from lerai.logging_utils import redact_value
+
+
+logger = logging.getLogger(__name__)
 
 BASE = os.environ.get("FOOTPRINT_API_BASE_URL")
 cert_path = os.environ.get("CERT_PATH")
@@ -113,7 +118,7 @@ def compare_offline_vs_production(check_staleness_only=False, stale_hours=36):
     
     stderr = response.get("stderr", "").strip()
     if stderr:
-        print(f"Warning: stderr was non-empty:\n{stderr}")
+        logger.warning("Diff script returned stderr", extra={"stderr": redact_value(stderr)})
     
     stdout = response.get("stdout", "")
     if not stdout.strip():
@@ -138,7 +143,6 @@ if __name__ == "__main__":
     """
     try:
         result = compare_offline_vs_production()
-        print("=== Diff Summary ===")
-        print(result)
+        logger.info("Diff summary generated", extra={"summary": redact_value(result)})
     except Exception as e:
-        print(f"Error: {e}")
+        logger.exception("CSV diff CLI error")

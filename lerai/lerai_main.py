@@ -29,16 +29,21 @@ from scheduled_jobs import (
     send_daily_csv_diff_report,
     send_daily_offload_report,
 )
+from lerai.logging_utils import configure_default_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def run_bot(bot):
-    print("LeRAI v1.6 listening on async loop...")
+    logger.info("LeRAI v1.6 listening on async loop")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     bot.run()
-    print("Done with async loop...")
+    logger.info("LeRAI async loop stopped")
 
 def lerai_main(): 
+    configure_default_logging()
 
     # ── Bot setup ─────────────────────────────────────────────────────────────
     BOT_TOKEN = os.environ.get("WEBEX_ACCESS_TOKEN", "default_value")
@@ -94,6 +99,6 @@ def lerai_main():
     bot_thread = threading.Thread(target=run_bot, args=(bot,), daemon=True)
     bot_thread.start()
 
-    print("LeRAI v1.6 is running...")
+    logger.info("LeRAI v1.6 is running")
     bot_thread.join()
 

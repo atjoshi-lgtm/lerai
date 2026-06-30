@@ -20,8 +20,13 @@ from typing import Dict, List, Optional, Tuple, Union
 import urllib.request
 import urllib.error
 import ssl
+import logging
 from openai_agent.openai_agent_client import responses
 from openai_agent.openai_agent_client import chat_completion
+from lerai.logging_utils import redact_value
+
+
+logger = logging.getLogger(__name__)
 
 
 BASE = os.environ.get("FOOTPRINT_API_BASE_URL")
@@ -106,12 +111,12 @@ def ask_chatgpt_to_summarize_expected_observed_diff(s: str) -> str:
 
 
 def run_offload_analysis_workflow(): 
-    print ("fetching expected-observed data")
+    logger.info("Fetching expected-observed data")
     x = fetch_expected_observed_via_http()
-    print ("Asking chatgpt")
+    logger.info("Summarizing expected-observed data with LLM")
     return ask_chatgpt_to_summarize_expected_observed_diff(x)
 
 
 
 if __name__ == "__main__":
-    print(run_offload_analysis_workflow()) 
+    logger.info("Manual expected-observed summary generated", extra={"summary": redact_value(run_offload_analysis_workflow())}) 

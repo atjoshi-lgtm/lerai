@@ -30,6 +30,8 @@ These items were improved before this document was written:
 | Promotion token security | `lerai/promote.py`, `tests/test_promote_security.py` | Approval tokens are now HMAC-signed, versioned, and TTL-validated with `PROMOTION_TOKEN_SECRET` and `PROMOTION_TOKEN_TTL_SECONDS`. |
 | Promotion parsing | `lerai/promote.py`, `tests/test_promote_security.py` | `/promote` now uses deterministic parser patterns instead of LLM extraction. |
 | DP request state | `lerai/DP_AMA.py`, `lerai/lerai_commands.py`, `tests/test_dp_ama_state.py` | `dplist_save` was removed; DP candidate and verification paths can share explicit request-scoped DP data. |
+| Config helper foundation | `lerai/config.py`, `tests/test_config.py` | Shared helpers now exist for required, optional, integer, boolean, JSON, and file-based environment settings. |
+| Query2 parser hardening | `lerai/query2_variance_addition.py`, `lerai/quota_exceed.py`, `tests/test_query_response_parsing.py` | Malformed JSON, non-object responses, bad row shapes, corrected quota headers, and non-numeric quota values are now handled with explicit error messages. |
 
 These changes reduce obvious startup/runtime failures, but they do not remove the higher-level reliability risks below.
 
@@ -50,6 +52,7 @@ Completed improvements:
 - Tokens are HMAC-SHA256 signed using `PROMOTION_TOKEN_SECRET`.
 - Tokens expire according to `PROMOTION_TOKEN_TTL_SECONDS`, defaulting to 3600 seconds.
 - Tampered, expired, malformed, and unsigned tokens are rejected by tests.
+- Active high-risk `print()` calls were replaced with logger calls and shared redaction helpers.
 
 Remaining risks:
 
@@ -172,7 +175,7 @@ Problems:
 
 - Environment variables are read directly from many modules.
 - Some modules fail early; others use default placeholder values such as `default_value`.
-- Certificate paths and service URLs are duplicated across files.
+- Certificate paths and service URLs are still duplicated across files, although `lerai/config.py` now provides helpers that can be adopted incrementally.
 - Missing config often fails only when a command is first used.
 
 Why this can cause unreliable or random behavior:
@@ -183,12 +186,14 @@ Why this can cause unreliable or random behavior:
 
 Recommended fix:
 
-- Create `lerai/config.py` with typed settings and validation helpers.
+- Continue wiring modules to `lerai/config.py` helpers.
 - Validate required settings at startup for enabled features.
 - Allow optional workflows to be disabled explicitly when their config is missing.
 - Add a startup config report that does not print secret values.
 
 ### 6. Debug Prints and Logging Are Not Production-Grade
+
+Status: partially addressed. Active `print()` calls were replaced with logger calls in the no-server logging pass, and `lerai/logging_utils.py` now redacts common secrets and PII. Request correlation ids and production log field design remain open.
 
 Locations include:
 
@@ -201,10 +206,10 @@ Locations include:
 
 Problems:
 
-- Debug information is printed directly with `print()`.
-- Full prompts, messages, stdout/stderr, and token-like values may be printed.
+- Debug information now uses logger calls, but logging handlers and production field conventions are not centrally defined.
+- Full prompts, messages, stdout/stderr, and token-like values now pass through basic redaction helpers before logging.
 - Logs lack correlation ids and structured fields.
-- Command entry logging is repeated in each command class.
+- Command entry logging uses a shared helper, but the command classes still call it individually.
 
 Why this can cause unreliable or random behavior:
 
@@ -214,10 +219,10 @@ Why this can cause unreliable or random behavior:
 
 Recommended fix:
 
-- Use module-level loggers instead of `print()`.
+- Continue using module-level loggers and expand tests as more fields become stable.
 - Add a request id at command entry and pass it through workflow calls.
-- Redact secrets, raw tokens, full prompts, and large tool outputs by default.
-- Centralize command-entry logging in a shared command base class.
+- Extend redaction rules as deployment-specific sensitive fields are confirmed.
+- Centralize command-entry logging in a shared command base class if command duplication grows.
 
 ## Medium-Risk Maintainability Issues
 
@@ -303,8 +308,8 @@ Recommended fix:
 
 Many modules assume upstream responses have the expected shape:
 
-- Query2 returns JSON with `returncode`, `stdout`, and `stderr`.
-- `stdout` is a Python-list-like string parsable by `ast.literal_eval()`.
+- Query2 returns JSON with `returncode`, `stdout`, and `stderr`; the variance/quota parsers now validate malformed response shapes more defensively.
+- `stdout` is still a Python-list-like string parsed by `ast.literal_eval()`.
 - HTTP text endpoints return content suitable for immediate prompt injection.
 - Footprint API responses are JSON and tool arguments are valid.
 
@@ -385,8 +390,8 @@ Current tests cover only a small slice. The most important missing tests are:
 | Promotion parsing | Tests now cover deterministic parser cases. Add handler-level tests for ambiguous command rejection with guidance. |
 | LLM output validation | malformed JSON, Markdown-wrapped JSON, missing fields, extra fields. |
 | DP concurrency | simultaneous requests do not share state. |
-| Query2 parsing | stderr handling, non-zero return code, malformed stdout, unexpected row shape. |
-| Config validation | missing env vars produce clear startup or feature-disabled errors. |
+| Query2 parsing | Basic malformed JSON, row-shape, corrected header, and non-numeric value tests now exist. Add more cases for unexpected headers and upstream contract changes. |
+| Config validation | Helper-level tests now exist. Add module-level tests as each workflow adopts the helpers. |
 | HTTP retries | transient 500/timeout retries for idempotent reads. |
 | Footprint tool calls | invalid tool names, invalid arguments, API failure returned to model safely. |
 | Large input handling | logs/diffs/DB outputs above configured limits. |
@@ -397,12 +402,11 @@ Current tests cover only a small slice. The most important missing tests are:
 
 These can be implemented and tested without a live Webex bot:
 
-1. Add config validation helpers for required env vars and cert/key paths.
-2. Replace high-risk `print()` calls with structured logging and redaction.
-3. Add request correlation ids at command entry.
-4. Add TOML parsing and schema validation for override writer output.
-5. Add unit tests for handler-level promotion authorization, malformed Query2 responses, and config validation.
-6. Add explicit session ownership and TTL for `webex_thread_chatgpt_history` if it is used.
+1. Wire existing modules to the new config helpers for required env vars and cert/key paths.
+2. Add request correlation ids at command entry.
+3. Add TOML parsing and schema validation for override writer output.
+4. Add unit tests for handler-level promotion authorization and module-level config adoption.
+5. Add explicit session ownership and TTL for `webex_thread_chatgpt_history` if it is used.
 
 ### Phase 2: No-Server Plus Mocked Service Tests
 

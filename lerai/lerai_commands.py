@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from webex_bot.models.command import Command
 from csv_env_diff import compare_offline_vs_production
 from log_error_summary import get_airflow_error_summary
@@ -11,6 +12,10 @@ from query2_variance_addition import check_query2_for_variance_addition
 from quota_exceed import check_query2_for_quota_exceed
 from promote import handle_promotion_request, handle_approval_request
 from leroy_overrides_writer import write_toml
+from lerai.logging_utils import log_user_request, redact_value
+
+
+logger = logging.getLogger(__name__)
 
 
 class CompareCsvEnvsCommand(Command):
@@ -26,8 +31,7 @@ class CompareCsvEnvsCommand(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Comparing offline and production CSVs... this may take a few seconds."
 
     def execute(self, message, attachment_actions, activity):
@@ -56,8 +60,7 @@ class AirflowErrorSummaryCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Collecting and summarizing Airflow ERROR logs... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -84,8 +87,7 @@ class ExpectedObservedDiffCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Collecting and summarizing expected and observed offload... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -113,8 +115,7 @@ class LRDPDevCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -149,8 +150,7 @@ class LRDPCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -178,8 +178,7 @@ class footprintCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -204,8 +203,7 @@ class PromoteCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running safety evaluation before opening promotion request... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -225,8 +223,7 @@ class ApproveCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Processing your approval... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -243,8 +240,7 @@ class QueryVarianceCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Checking for large regions in need of query2 variance... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -261,8 +257,7 @@ class QuotaExceedCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Checking for large regions where quota is exceeded... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -280,11 +275,14 @@ class LeroyOverrideWriterCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        print ("***** details of the message received *****")
-        print (f"message = {message}")
-        print (f"attachment_actions = {attachment_actions}")
-        print (f"activity = {activity}")
-        print ("***** details of the message received *****")
+        logger.info(
+            "Override writer request received",
+            extra={
+                "request_message": redact_value(message),
+                "attachment_actions": redact_value(attachment_actions),
+                "activity": redact_value(activity),
+            },
+        )
         return "✅ Writing... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -306,8 +304,7 @@ class SimulateDailyReport(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Simulating daily report"
 
     def execute(self, message, attachment_actions, activity):
@@ -332,8 +329,7 @@ class SimulateDailyOffloadReport(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Simulating daily offload report"
 
     def execute(self, message, attachment_actions, activity):

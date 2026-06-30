@@ -31,13 +31,36 @@ class Query2VarianceResponseTests(unittest.TestCase):
         self.assertIn("123", result)
         self.assertIn("Example LR", result)
 
+    def test_variance_handles_invalid_json(self):
+        result = handle_variance_response("{", silent=False)
+
+        self.assertIn("Invalid JSON response", result)
+
+    def test_variance_handles_non_object_json(self):
+        result = handle_variance_response("[]", silent=False)
+
+        self.assertIn("Response JSON must be an object", result)
+
+    def test_variance_handles_short_data_row(self):
+        response = json.dumps(
+            {
+                "returncode": 0,
+                "stdout": "[['region', 'regionname', 'vsize_limit'], ['123']]",
+                "stderr": "",
+            }
+        )
+
+        result = handle_variance_response(response, silent=False)
+
+        self.assertIn("Invalid row format", result)
+
 
 class QuotaResponseTests(unittest.TestCase):
     def test_quota_empty_result_is_quiet_when_silent(self):
         response = json.dumps(
             {
                 "returncode": 0,
-                "stdout": "[['region', 'regionname', 'vsize_limit']]",
+                "stdout": "[['physregion', 'fp_config_name', 'objcount_max', 'objectlimit', 'objcount', 'objcount_quota']]",
                 "stderr": "",
             }
         )
@@ -59,6 +82,37 @@ class QuotaResponseTests(unittest.TestCase):
         self.assertIn("fp-config", result)
         self.assertIn("105", result)
         self.assertIn("100", result)
+
+    def test_quota_handles_invalid_json(self):
+        result = handle_quota_response("{", silent=False)
+
+        self.assertIn("Invalid JSON response", result)
+
+    def test_quota_handles_short_data_row(self):
+        response = json.dumps(
+            {
+                "returncode": 0,
+                "stdout": "[['physregion', 'fp_config_name', 'objcount_max', 'objectlimit', 'objcount', 'objcount_quota'], ['123', 'fp-config']]",
+                "stderr": "",
+            }
+        )
+
+        result = handle_quota_response(response, silent=False)
+
+        self.assertIn("Invalid row format", result)
+
+    def test_quota_handles_non_numeric_values(self):
+        response = json.dumps(
+            {
+                "returncode": 0,
+                "stdout": "[['physregion', 'fp_config_name', 'objcount_max', 'objectlimit', 'objcount', 'objcount_quota'], ['123', 'fp-config', 'not-a-number', 20, 105, 100]]",
+                "stderr": "",
+            }
+        )
+
+        result = handle_quota_response(response, silent=False)
+
+        self.assertIn("invalid objcount_max", result)
 
 
 if __name__ == "__main__":

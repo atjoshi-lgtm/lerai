@@ -1,4 +1,4 @@
-import os
+from lerai.config import bool_env, int_env, required_env
 
 
 REQUIRED_AZURE_ENV_VARS = (
@@ -19,28 +19,23 @@ SUPPORTED_PAYLOAD_KWARGS = (
 )
 
 
-def _required_env(name):
-    value = os.environ.get(name)
-    if not value:
-        raise ValueError(f"Missing required Azure OpenAI environment variable: {name}")
-    return value
-
-
 def _request_timeout(kwargs):
-    timeout = kwargs.get("timeout", os.environ.get("AZURE_OPENAI_TIMEOUT", "30"))
+    timeout = kwargs.get("timeout")
+    if timeout is None:
+        timeout = int_env("AZURE_OPENAI_TIMEOUT", 30, minimum=1)
     return float(timeout)
 
 
 def _ssl_verify():
-    return os.environ.get("AZURE_OPENAI_VERIFY_SSL", "true").lower() not in {"0", "false", "no"}
+    return bool_env("AZURE_OPENAI_VERIFY_SSL", default=True)
 
 
 def _build_headers():
     return {
         "Content-Type": "application/json",
-        "api-key": _required_env("AZURE_API_KEY"),
-        "user-id": _required_env("AZURE_USER_ID"),
-        "app-name": _required_env("AZURE_APP_NAME"),
+        "api-key": required_env("AZURE_API_KEY"),
+        "user-id": required_env("AZURE_USER_ID"),
+        "app-name": required_env("AZURE_APP_NAME"),
     }
 
 
@@ -93,7 +88,7 @@ def _raise_for_status(response, requests_module):
 def chat_completion(messages, functions=None, model="GPT-5.2", **kwargs):
     requests_module = _load_requests()
     response = requests_module.post(
-        _required_env("AZURE_OPENAI_URL"),
+        required_env("AZURE_OPENAI_URL"),
         headers=_build_headers(),
         json=_build_payload(messages, functions=functions, model=model, **kwargs),
         timeout=_request_timeout(kwargs),

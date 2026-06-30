@@ -9,6 +9,7 @@ import sys
 import csv
 import re
 import tempfile
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +17,11 @@ from typing import Dict, List, Optional, Tuple, Union
 import json
 
 from openai_agent.openai_agent_client import responses
+from lerai.logging_utils import redact_value
 
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+logger = logging.getLogger(__name__)
 
 
 webex_thread_chatgpt_history = {}
@@ -52,9 +55,7 @@ def ask_chatgpt_to_write_overrides(schema: str, userquetion: str) -> str:
     prompt += userquetion 
     prompt += "\n"
 
-    print ("******* prompt ********")
-    print (prompt)
-    print ("******* prompt ********")
+    logger.debug("Override writer prompt built", extra={"prompt": redact_value(prompt)})
     msg = [{"role": "user", "content": prompt}]
     r = responses(
         messages=msg,
@@ -79,4 +80,4 @@ def write_toml (userquestion: str = ""):
 if __name__ == "__main__":
 
     x = write_toml("I'd like to remove mm2 from all the US large regions")
-    print (x)
+    logger.info("Manual override writer output generated", extra={"output": redact_value(x)})

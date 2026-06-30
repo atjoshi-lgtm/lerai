@@ -11,6 +11,7 @@ import sys
 import csv
 import re
 import tempfile
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,9 +23,11 @@ except ImportError:
     from netarch_queries import query_LR_DP
 
 from openai_agent.openai_agent_client import responses
+from lerai.logging_utils import redact_value
 
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+logger = logging.getLogger(__name__)
 
 def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
@@ -146,6 +149,5 @@ if __name__ == "__main__":
     ca = create_dp_candiate_answer(question)
     ver = verify_dp_candiate_answer(question, ca)
 
-    print (ca)
-    print ("----- Verification ----")
-    print (ver)
+    logger.info("Manual DP candidate answer generated", extra={"answer": redact_value(ca)})
+    logger.info("Manual DP verification generated", extra={"verification": redact_value(ver)})

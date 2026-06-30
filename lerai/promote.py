@@ -7,6 +7,8 @@ import os
 import re
 import time
 
+from lerai.config import int_env, required_env
+from lerai.logging_utils import redact_value
 from lerai.webex_presence import send_dm, get_sender_email, get_space_id, send_space_message
 
 
@@ -33,14 +35,11 @@ def _load_webex_api():
 
 
 def _promotion_token_secret():
-    secret = os.environ.get("PROMOTION_TOKEN_SECRET")
-    if not secret:
-        raise ValueError("PROMOTION_TOKEN_SECRET is required for promotion approval tokens")
-    return secret.encode("utf-8")
+    return required_env("PROMOTION_TOKEN_SECRET").encode("utf-8")
 
 
 def _promotion_token_ttl_seconds():
-    return int(os.environ.get("PROMOTION_TOKEN_TTL_SECONDS", DEFAULT_PROMOTION_TOKEN_TTL_SECONDS))
+    return int_env("PROMOTION_TOKEN_TTL_SECONDS", DEFAULT_PROMOTION_TOKEN_TTL_SECONDS, minimum=1)
 
 
 def _base64url_encode(raw_bytes):
@@ -256,9 +255,10 @@ def handle_approval_request(message, activity):
             std_out = data.get("stdout")
             std_err = data.get("stderr")
     
-            # 3. Print them to your console/logs for debugging
-            print(f"STDOUT: {std_out}")
-            print(f"STDERR: {std_err}")
+            logger.info(
+                "Promotion agent returned success",
+                extra={"stdout": redact_value(std_out), "stderr": redact_value(std_err)},
+            )
             
             # Who Am I responding to? 
             # 1. If request and approval both happened on the same space, reply once to that space (i.e. return the message with mentions). 
@@ -277,8 +277,13 @@ def handle_approval_request(message, activity):
                    f"**Approver:** {requested_approver}\n"
                    f"**Promotion details:** {std_out}\n{std_err}")
 
-            print (f"current webex space = {current_webex_space}")
-            print (f"Webex space in token = {webex_space}")
+            logger.info(
+                "Promotion response routing resolved",
+                extra={
+                    "current_webex_space": redact_value(current_webex_space),
+                    "request_webex_space": redact_value(webex_space),
+                },
+            )
             # 1. 
             if current_webex_space and webex_space and current_webex_space == webex_space:
                 return msg_w_mention
@@ -305,5 +310,5 @@ def handle_approval_request(message, activity):
             return msg          
             
     except Exception as e:
-        print(f"Promotion connection error: {e}")
+        logger.exception("Promotion connection error")
         return f"🔥 Connection to LeROY Agent failed: `{str(e)}`"

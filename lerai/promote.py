@@ -1,52 +1,147 @@
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
-import ssl
+import re
 import time
 
-import requests
-from webexteamssdk import WebexTeamsAPI
-from lerai.webex_presence import send_dm, get_sender_email, get_room_id, get_space_id, send_space_message
-from openai_agent.openai_agent_client import chat_completion
+from lerai.webex_presence import send_dm, get_sender_email, get_space_id, send_space_message
 
+
+logger = logging.getLogger(__name__)
+TOKEN_VERSION = "v2"
+DEFAULT_PROMOTION_TOKEN_TTL_SECONDS = 3600
+PROMOTE_USAGE = "Please use: `/promote approver=<name> token=<token>`"
+
+
+def _load_requests():
+    try:
+        import requests
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing required dependency: requests") from exc
+    return requests
+
+
+def _load_webex_api():
+    try:
+        from webexteamssdk import WebexTeamsAPI
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing required dependency: webexteamssdk") from exc
+    return WebexTeamsAPI
+
+
+def _promotion_token_secret():
+    secret = os.environ.get("PROMOTION_TOKEN_SECRET")
+    if not secret:
+        raise ValueError("PROMOTION_TOKEN_SECRET is required for promotion approval tokens")
+    return secret.encode("utf-8")
+
+
+def _promotion_token_ttl_seconds():
+    return int(os.environ.get("PROMOTION_TOKEN_TTL_SECONDS", DEFAULT_PROMOTION_TOKEN_TTL_SECONDS))
+
+
+def _base64url_encode(raw_bytes):
+    return base64.urlsafe_b64encode(raw_bytes).decode("utf-8").rstrip("=")
+
+
+def _base64url_decode(value):
+    missing_padding = len(value) % 4
+    if missing_padding:
+        value += "=" * (4 - missing_padding)
+    return base64.urlsafe_b64decode(value)
+
+
+def _sign_payload(payload):
+    return _base64url_encode(hmac.new(_promotion_token_secret(), payload.encode("utf-8"), hashlib.sha256).digest())
+
+
+def parse_promote_message(message):
+    if not message:
+        return None, None
+
+    patterns = [
+        r"(?:^|\s)/?promote\s+approver\s*[=:]\s*(?P<approver>\S+)\s+token\s*[=:]\s*(?P<token>\S+)",
+        r"(?:^|\s)/?promote\s+ask\s+(?P<approver>\S+)\s+token\s+(?P<token>\S+)",
+        r"(?:^|\s)/?promote\s+(?P<approver>\S+?)[,:]?\s+token\s*[=:]?\s*(?P<token>\S+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message.strip(), re.IGNORECASE)
+        if match:
+            return match.group("approver").strip().strip(",:"), match.group("token").strip().strip(",")
+
+    return None, None
+
+
+def _resolve_approver(approved_map, approver_input):
+    if approver_input in approved_map:
+        return approver_input, approved_map[approver_input]
+
+    approver_lower = approver_input.lower()
+    for name, email in approved_map.items():
+        if name.lower() == approver_lower:
+            return name, email
+
+    return approver_input, None
 
 
 def create_approval_token(sender_email, approver_email, webex_space, original_token):
-    """Combines 4 fields into a single reversible token."""
-    timestamp = str(int(time.time()))
-    # Join with a separator that unlikely to be in emails
-    raw_data = f"{sender_email}|{approver_email}|{webex_space}|{original_token}|{timestamp}"
-    
-    # Encode to Base64 to make it a single string
-    token_bytes = raw_data.encode('utf-8')
-    encoded_token = base64.urlsafe_b64encode(token_bytes).decode('utf-8')
-    
-    return encoded_token.rstrip('=')  # Remove padding for a cleaner look
+    payload_data = {
+        "version": TOKEN_VERSION,
+        "sender": sender_email,
+        "approver": approver_email,
+        "webex_space": webex_space or "",
+        "original_token": original_token,
+        "timestamp": int(time.time()),
+    }
+    payload = _base64url_encode(json.dumps(payload_data, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signature = _sign_payload(payload)
+    return f"{TOKEN_VERSION}.{payload}.{signature}"
+
+
+def _is_token_fresh(timestamp, ttl_seconds=None):
+    try:
+        issued_at = int(timestamp)
+    except (TypeError, ValueError):
+        return False
+
+    ttl = _promotion_token_ttl_seconds() if ttl_seconds is None else ttl_seconds
+    now = int(time.time())
+    return issued_at <= now and now - issued_at <= ttl
 
 def decode_approval_token(token):
-    """Decodes the token back into the 5 original fields."""
+    """Validates and decodes a signed approval token."""
     try:
-        # Add padding back if necessary
-        missing_padding = len(token) % 4
-        if missing_padding:
-            token += '=' * (4 - missing_padding)
-            
-        decoded_bytes = base64.urlsafe_b64decode(token)
-        decoded_str = decoded_bytes.decode('utf-8')
-        
-        # Split back into parts
-        parts = decoded_str.split('|')
-        if len(parts) == 5:
-            return {
-                "sender": parts[0],
-                "approver": parts[1],
-                "webex_space": parts[2],
-                "original_token": parts[3],
-                "timestamp": parts[4]
-            }
+        version, payload, signature = token.split(".", 2)
+        if version != TOKEN_VERSION:
+            return None
+
+        expected_signature = _sign_payload(payload)
+        if not hmac.compare_digest(signature, expected_signature):
+            return None
+
+        decoded = json.loads(_base64url_decode(payload).decode("utf-8"))
+        if decoded.get("version") != TOKEN_VERSION:
+            return None
+        if not _is_token_fresh(decoded.get("timestamp")):
+            return None
+
+        required_fields = ("sender", "approver", "webex_space", "original_token", "timestamp")
+        if not all(field in decoded for field in required_fields):
+            return None
+
+        return {
+            "sender": decoded["sender"],
+            "approver": decoded["approver"],
+            "webex_space": decoded["webex_space"],
+            "original_token": decoded["original_token"],
+            "timestamp": str(decoded["timestamp"]),
+        }
     except Exception as e:
-        print(f"Error decoding token: {e}")
+        logger.warning("Could not decode approval token: %s", e)
         
     return None
 
@@ -66,6 +161,7 @@ def handle_promotion_request(message, activity):
     else:
         approved_map = approved_users_raw
     webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
+    WebexTeamsAPI = _load_webex_api()
     api = WebexTeamsAPI(access_token=webex_token)
     
     sender_email = get_sender_email(activity)
@@ -76,38 +172,20 @@ def handle_promotion_request(message, activity):
         list_str = "\n".join([f"- {name}" for name in authorized_names])
         return (f"❌ Access Denied.\n\n**Authorized Requesters:**\n{list_str}")
 
-    # 2. Extract Data using AI
-    valid_names = ", ".join([name for name in approved_map.keys() if "@" not in name])
-    prompt = (
-        f"Analyze this message: '{message}'\n"
-        f"1. Identify the requested approver. Valid choices: {valid_names}.\n"
-        f"2. Identify the promotion token.\n"
-        "Return a JSON object with keys 'approver' and 'token'. Set to null if missing."
-    )
-
-    try:
-        llm_resp = chat_completion(
-            messages=[{"role": "system", "content": "You are a precise technical analyst."},
-                      {"role": "user", "content": prompt}]
-        ) #
-        
-        # Clean potential markdown from LLM output before parsing
-        raw_content = llm_resp["choices"][0]["message"]["content"].replace("```json", "").replace("```", "").strip()
-        extracted = json.loads(raw_content)
-        approver_input = extracted.get("approver")
-        token = extracted.get("token")
-    except Exception as e:
-        return f"❌ AI Parsing Error: {e}"
+    approver_input, token = parse_promote_message(message)
 
     if not approver_input or not token:
-        return "⚠️ Could not identify the approver or token. Please say something like: '/promote... ask Bruce, token XYZ'"
+        return f"⚠️ Could not identify the approver or token. {PROMOTE_USAGE}"
 
     # 3. Resolve & Notify
-    target_email = approved_map.get(approver_input)
+    approver_name, target_email = _resolve_approver(approved_map, approver_input)
     if not target_email:
         return f"❌ `{approver_input}` is not an authorized approver."
 
-    new_token = create_approval_token(sender_email, target_email, webex_space, token)
+    try:
+        new_token = create_approval_token(sender_email, target_email, webex_space, token)
+    except ValueError as e:
+        return f"❌ Promotion token configuration error: {e}"
 
     if webex_space:
         dm_body = (
@@ -127,7 +205,7 @@ def handle_promotion_request(message, activity):
             f"Once sure, to approve, reply to me with `/approve {new_token}` (DM or in the LeROY ops space)."
         )
         if send_dm(api, target_email, dm_body): #
-            return f"✅ Request sent to **{approver_input}**. Awaiting approval."
+            return f"✅ Request sent to **{approver_name}**. Awaiting approval."
         else:
             return f"❌ Failed to notify {target_email}."
 
@@ -140,10 +218,9 @@ def handle_approval_request(message, activity):
             return "❌ Missing token. Usage: `/approve <token>`"
 
     # 1. Decode
-    print (token_to_process)
     data = decode_approval_token(token_to_process)
     if not data:
-        return "❌ Invalid or corrupted approval token."
+        return "❌ Invalid, expired, or corrupted approval token."
 
     sender_email = get_sender_email(activity) #
 
@@ -165,6 +242,8 @@ def handle_approval_request(message, activity):
     params = {'token': original_token}
 
     webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
+    requests = _load_requests()
+    WebexTeamsAPI = _load_webex_api()
     api = WebexTeamsAPI(access_token=webex_token)
 
     try:

@@ -10,10 +10,10 @@ LeRAI is a useful operational assistant, but the current implementation is still
 
 1. LLM outputs are treated as dependable structured data in places where deterministic parsing or schema validation should be used.
 2. Several workflows depend on external services without retries, request correlation, or centralized error handling.
-3. Some modules use mutable global state or base64-only tokens, which can behave unpredictably under concurrent or security-sensitive usage.
+3. Some modules still use mutable global or process-local state, which can behave unpredictably under concurrent or restarted bot usage.
 4. Configuration, logging, imports, and validation are scattered across modules instead of centralized.
 
-A recent cleanup fixed several obvious runtime problems and hardened the shared Azure OpenAI client. The next work should prioritize production-action safety, deterministic command parsing, config validation, structured logging, and request-scoped state.
+Recent cleanup fixed several obvious runtime problems, hardened the shared Azure OpenAI client, signed promotion approval tokens, replaced `/promote` LLM extraction with deterministic parsing, and removed the DP global state. The next work should prioritize config validation, structured logging, request correlation, output validation, and retry/error handling.
 
 ## Already Improved in Recent Cleanup
 
@@ -27,40 +27,41 @@ These items were improved before this document was written:
 | Dependency tracking | `requirements.txt` | A minimal dependency file now lists runtime packages. |
 | No-server tests | `tests/` | Unit tests now cover LLM payload construction and Query2 response parsing. |
 | Compile validation | repository-wide | `python3 -m compileall .` passed after cleanup. |
+| Promotion token security | `lerai/promote.py`, `tests/test_promote_security.py` | Approval tokens are now HMAC-signed, versioned, and TTL-validated with `PROMOTION_TOKEN_SECRET` and `PROMOTION_TOKEN_TTL_SECONDS`. |
+| Promotion parsing | `lerai/promote.py`, `tests/test_promote_security.py` | `/promote` now uses deterministic parser patterns instead of LLM extraction. |
+| DP request state | `lerai/DP_AMA.py`, `lerai/lerai_commands.py`, `tests/test_dp_ama_state.py` | `dplist_save` was removed; DP candidate and verification paths can share explicit request-scoped DP data. |
 
 These changes reduce obvious startup/runtime failures, but they do not remove the higher-level reliability risks below.
 
 ## Critical and High-Risk Issues
 
-### 1. Promotion Approval Tokens Are Not Cryptographically Protected
+### 1. Production Promotion Flow Still Needs Full Operational Controls
 
 Location: `lerai/promote.py`
 
-The approval token is a base64-url encoded string containing:
+The approval token implementation has been improved. Tokens now use this format:
 
 ```text
-sender_email|approver_email|webex_space|original_token|timestamp
+v2.<base64url-json-payload>.<base64url-hmac-signature>
 ```
 
-Problems:
+Completed improvements:
 
-- Base64 is reversible encoding, not a signature or encryption mechanism.
-- The token has a timestamp field, but the current approval path does not enforce expiration.
-- There is no HMAC or server-held secret to prevent token forgery.
-- The approval flow performs an important production action through `LEROY_AGENT_PROMOTE_URL`, so token integrity matters.
+- Tokens are HMAC-SHA256 signed using `PROMOTION_TOKEN_SECRET`.
+- Tokens expire according to `PROMOTION_TOKEN_TTL_SECONDS`, defaulting to 3600 seconds.
+- Tampered, expired, malformed, and unsigned tokens are rejected by tests.
 
-Why this can cause unreliable or unsafe behavior:
+Remaining risks:
 
-- Old approval tokens may remain usable indefinitely.
-- Anyone who understands the format could potentially construct a token-like value if they know the expected fields.
-- Failures or abuse would be hard to audit because there is no request correlation id.
+- The promotion call to `LEROY_AGENT_PROMOTE_URL` still needs request correlation, audit logging, and idempotency protection if the upstream service supports it.
+- `PROMOTION_TOKEN_SECRET` must be configured securely in deployment; missing secret prevents token creation and approval verification.
+- Rollout should account for old unsigned tokens being intentionally invalid after this change.
 
-Recommended fix:
+Recommended next controls:
 
-- Add an HMAC-SHA256 signature using a secret stored outside source control.
-- Include token expiry, for example five or fifteen minutes depending on operational needs.
-- Validate requester, approver, room context, timestamp, and signature before calling LeROY.
-- Add unit tests for valid, expired, tampered, and wrong-approver tokens.
+- Add audit logs containing request id, requester, approver, source space, and LeROY result.
+- Add an idempotency key to the LeROY call if supported.
+- Decide the production TTL policy and document it for operators.
 
 ### 2. LLM-Based Parsing Is Used Where Deterministic Parsing Is Safer
 
@@ -73,7 +74,7 @@ Locations:
 
 Examples:
 
-- `/promote` asks the LLM to identify the approver and promotion token from free-form text.
+- `/promote` previously asked the LLM to identify the approver and promotion token from free-form text. It now uses deterministic parser patterns.
 - `LRDPDevCommand` extracts `<answer>` and `<verdict>` tags from LLM output using regex.
 - `leroy_overrides_writer.py` returns model-generated TOML without validating the generated content against a TOML parser and schema.
 - `FD_AMA.py` trusts model-generated tool arguments after `json.loads()`.
@@ -83,11 +84,11 @@ Why this can cause unreliable or random behavior:
 - Even at low temperature, LLM output can vary in formatting.
 - Prompts can be affected by user phrasing and prompt injection.
 - Missing tags, malformed JSON, or extra Markdown can break parsing.
-- A production action should not depend on a model correctly extracting a token from free text.
+- Production actions should continue to avoid model-dependent parsing.
 
 Recommended fix:
 
-- Use deterministic command grammar for production actions, such as:
+- Keep deterministic command grammar for production actions, such as:
 
 ```text
 /promote approver=<name> token=<token>
@@ -97,30 +98,26 @@ Recommended fix:
 - Validate all parsed LLM output with explicit schemas before use.
 - For TOML output, parse TOML and validate against a maintained schema before returning it.
 
-### 3. Global Mutable State Can Cross-Contaminate Requests
+### 3. Remaining Global or Process-Local State Can Cross-Contaminate Requests
 
 Locations:
 
-- `lerai/DP_AMA.py`: `dplist_save`
 - `lerai/leroy_overrides_writer.py`: `webex_thread_chatgpt_history`
 
 Problems:
 
-- `DP_AMA.py` stores the latest DP query result in a module-level global.
-- If two users ask DP questions at the same time, the second request can overwrite state used by the first verification path.
+- `DP_AMA.py` previously stored the latest DP query result in `dplist_save`. That global has been removed.
 - `webex_thread_chatgpt_history` is a module-level dict without explicit eviction, ownership, or persistence semantics.
 
 Why this can cause unreliable or random behavior:
 
-- Concurrent Webex commands may see data from another request.
 - User-specific context can leak across requests if thread/session identifiers are not handled carefully.
 - In-memory state disappears on process restart.
 
 Recommended fix:
 
-- Pass DP data explicitly between functions instead of storing it globally.
 - For multi-turn state, use a session object keyed by Webex room/thread/user with TTL and size limits.
-- Add concurrency tests for simultaneous DP requests.
+- Add tests for override-writer session isolation if multi-turn behavior is kept.
 
 ### 4. External Service Calls Have Little Resilience
 
@@ -335,7 +332,7 @@ Recommended fix:
 | Free-form user input for production actions | `/promote` | Ambiguous messages can be parsed differently by the model. |
 | No schema validation of LLM results | Several LLM workflows | Bad output may be accepted or fail late. |
 | External service variability | HTTP endpoints, MySQL, Webex, Azure OpenAI | Network, rate limits, auth, or upstream data changes affect output. |
-| Global mutable state | `DP_AMA.py`, override writer | Concurrent requests can overwrite shared state. |
+| Process-local mutable state | override writer | Concurrent or restarted bot sessions can lose or mix conversation state if ownership and TTL are not enforced. |
 | Large prompt inputs | logs, diffs, DB results | Token size, latency, and truncation vary by data volume. |
 | No retries | most external calls | Transient failures are exposed as command failures. |
 | Missing request correlation | all workflows | Failures are hard to trace, making behavior seem inconsistent. |
@@ -384,8 +381,8 @@ Current tests cover only a small slice. The most important missing tests are:
 
 | Area | Suggested tests |
 | --- | --- |
-| Promotion tokens | valid token, expired token, tampered token, wrong approver, malformed base64. |
-| Promotion parsing | deterministic parser cases; ambiguous command rejected with guidance. |
+| Promotion tokens | Tests now cover valid token, expired token, tampered token, and missing secret. Add wrong-approver handler-level tests when Webex activity handling is mocked. |
+| Promotion parsing | Tests now cover deterministic parser cases. Add handler-level tests for ambiguous command rejection with guidance. |
 | LLM output validation | malformed JSON, Markdown-wrapped JSON, missing fields, extra fields. |
 | DP concurrency | simultaneous requests do not share state. |
 | Query2 parsing | stderr handling, non-zero return code, malformed stdout, unexpected row shape. |
@@ -400,13 +397,12 @@ Current tests cover only a small slice. The most important missing tests are:
 
 These can be implemented and tested without a live Webex bot:
 
-1. Add HMAC signing and TTL validation to promotion approval tokens.
-2. Replace LLM parsing for `/promote` with deterministic command parsing.
-3. Remove `dplist_save` global state from `DP_AMA.py`.
-4. Add config validation helpers for required env vars and cert/key paths.
-5. Replace high-risk `print()` calls with structured logging and redaction.
-6. Add unit tests for promotion tokens, command parsing, malformed Query2 responses, and config validation.
-7. Add TOML parsing and schema validation for override writer output.
+1. Add config validation helpers for required env vars and cert/key paths.
+2. Replace high-risk `print()` calls with structured logging and redaction.
+3. Add request correlation ids at command entry.
+4. Add TOML parsing and schema validation for override writer output.
+5. Add unit tests for handler-level promotion authorization, malformed Query2 responses, and config validation.
+6. Add explicit session ownership and TTL for `webex_thread_chatgpt_history` if it is used.
 
 ### Phase 2: No-Server Plus Mocked Service Tests
 

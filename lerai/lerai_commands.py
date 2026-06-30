@@ -4,7 +4,7 @@ from webex_bot.models.command import Command
 from csv_env_diff import compare_offline_vs_production
 from log_error_summary import get_airflow_error_summary
 from expected_observed_comparison import run_offload_analysis_workflow
-from DP_AMA import summarize_dps, create_dp_candiate_answer, verify_dp_candiate_answer
+from DP_AMA import summarize_dps, create_dp_candiate_answer, verify_dp_candiate_answer, fetch_dp_info
 from FD_AMA import answer_footprint_question
 from scheduled_jobs import send_daily_csv_diff_report, send_daily_offload_report
 from query2_variance_addition import check_query2_for_variance_addition
@@ -121,8 +121,9 @@ class LRDPDevCommand(Command):
         try:
 
             full_text = message
-            candidate_answer = create_dp_candiate_answer(full_text)
-            verification = verify_dp_candiate_answer(full_text, candidate_answer)
+            dpinfo = fetch_dp_info()
+            candidate_answer = create_dp_candiate_answer(full_text, dpinfo=dpinfo)
+            verification = verify_dp_candiate_answer(full_text, candidate_answer, dpinfo=dpinfo)
             a = f"{candidate_answer}\n{verification}"
             verdict_match = re.search(r'<verdict>(.*?)</verdict>',a, re.DOTALL)
             answer_match = re.search(r'<answer>(.*?)</answer>', a, re.DOTALL)    

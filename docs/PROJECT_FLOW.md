@@ -394,17 +394,15 @@ Request flow:
 sequenceDiagram
     participant Requester as Requester in Webex
     participant Bot as PromoteCommand
-    participant LLM as Azure OpenAI
     participant Webex as WebexTeamsAPI
     participant Approver as Approver
 
     Requester->>Bot: /promote message with approver and token
     Bot->>Bot: load APPROVED_USERS JSON
     Bot->>Bot: verify requester is authorized
-    Bot->>LLM: extract approver and token from message
-    LLM-->>Bot: JSON with approver and token
+    Bot->>Bot: parse approver and token deterministically
     Bot->>Bot: resolve approver name to email
-    Bot->>Bot: create base64 approval token
+    Bot->>Bot: create signed expiring approval token
     alt request came from a space
         Bot-->>Requester: return message mentioning approver
     else request came from DM
@@ -439,10 +437,10 @@ sequenceDiagram
 Token format:
 
 ```text
-sender_email|approver_email|webex_space|original_token|timestamp
+v2.<base64url-json-payload>.<base64url-hmac-signature>
 ```
 
-That string is base64-url encoded. The current implementation decodes and validates fields, but does not cryptographically sign the token or enforce timestamp expiry.
+The JSON payload contains the requester, approver, source Webex space, original LeROY token, timestamp, and token version. The signature is HMAC-SHA256 and requires `PROMOTION_TOKEN_SECRET`. The current implementation also enforces token freshness using `PROMOTION_TOKEN_TTL_SECONDS`, defaulting to 3600 seconds.
 
 ### Webex Presence Helpers
 
@@ -502,6 +500,8 @@ These functions can post reports to Webex spaces. However, scheduler registratio
 | `WEBEX_SPACE_ID` | `lerai/lerai_main.py`, `lerai/scheduled_jobs.py` | Main/default Webex space for reports. |
 | `LR_OFFLOAD_WEBEX_SPACE_ID` | `lerai/scheduled_jobs.py` | Space for offload watch reports. |
 | `APPROVED_USERS` | `lerai/promote.py` | JSON map of authorized names to email addresses. |
+| `PROMOTION_TOKEN_SECRET` | `lerai/promote.py` | Required secret used to sign and verify promotion approval tokens. |
+| `PROMOTION_TOKEN_TTL_SECONDS` | `lerai/promote.py` | Optional approval token lifetime in seconds. Defaults to 3600. |
 
 ### Azure OpenAI
 
@@ -573,11 +573,13 @@ Current tests:
 | --- | --- |
 | `tests/test_openai_agent_client.py` | Payload construction for model/generation controls and legacy function-to-tool conversion. |
 | `tests/test_query_response_parsing.py` | Query2 variance/quota parser behavior for empty and non-empty results. |
+| `tests/test_promote_security.py` | Deterministic promote parsing, signed approval token round trip, tamper rejection, expiry, and missing-secret behavior. |
+| `tests/test_dp_ama_state.py` | DP functions use request-scoped data and no longer expose `dplist_save`. |
 
 Useful no-server validation commands:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state
 python3 -m compileall .
 ```
 
@@ -592,5 +594,8 @@ A recent cleanup pass made the following static changes:
 - Hardened `openai_agent/openai_agent_client.py` by removing the global `requests.post` monkey patch, honoring model and generation kwargs, adding timeout handling, and improving HTTP error behavior.
 - Added `requirements.txt`.
 - Added no-server unit tests for LLM payload construction and Query2 response parsing.
+- Hardened promotion approval tokens with HMAC signing and TTL validation, and replaced LLM-based `/promote` extraction with deterministic parsing.
+- Removed `DP_AMA.py` module-level `dplist_save` state in favor of request-scoped DP data.
+- Added no-server unit tests for promotion security and DP state isolation.
 
 The code still needs broader architecture cleanup; see `docs/CODE_QUALITY_REVIEW.md`.

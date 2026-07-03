@@ -15,6 +15,11 @@ LeRAI is a useful operational assistant, but the current implementation is still
 
 Recent cleanup fixed several obvious runtime problems, hardened the shared Azure OpenAI client, signed promotion approval tokens, replaced `/promote` LLM extraction with deterministic parsing, and removed the DP global state. The next work should prioritize config validation, structured logging, request correlation, output validation, and retry/error handling.
 
+Current local validation snapshot (2026-07-03):
+
+- `python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils` passes with 44 tests.
+- `python3 -m compileall .` completes without syntax errors.
+
 ## Already Improved in Recent Cleanup
 
 These items were improved before this document was written:
@@ -70,15 +75,14 @@ Recommended next controls:
 
 Locations:
 
-- `lerai/promote.py`
 - `lerai/DP_AMA.py`
 - `lerai/leroy_overrides_writer.py`
 - `lerai/FD_AMA.py`
 
 Examples:
 
-- `/promote` previously asked the LLM to identify the approver and promotion token from free-form text. It now uses deterministic parser patterns.
-- `LRDPDevCommand` extracts `<answer>` and `<verdict>` tags from LLM output using regex.
+- `/promote` previously asked the LLM to identify the approver and promotion token from free-form text. This has been fixed; it now uses deterministic parser patterns.
+- `LRDPDevCommand` still extracts `<answer>` and `<verdict>` tags from LLM output using regex.
 - `leroy_overrides_writer.py` returns model-generated TOML without validating the generated content against a TOML parser and schema.
 - `FD_AMA.py` trusts model-generated tool arguments after `json.loads()`.
 
@@ -193,7 +197,7 @@ Recommended fix:
 
 ### 6. Debug Prints and Logging Are Not Production-Grade
 
-Status: partially addressed. Active `print()` calls were replaced with logger calls in the no-server logging pass, and `lerai/logging_utils.py` now redacts common secrets and PII. Request correlation ids and production log field design remain open.
+Status: partially addressed. Most active `print()` calls were replaced with logger calls in the no-server logging pass, and `lerai/logging_utils.py` now redacts common secrets and PII. A small number of manual CLI `print()` calls still exist in `lerai/leroy_overrides_writer.py`. Request correlation ids and production log field design remain open.
 
 Locations include:
 
@@ -334,7 +338,7 @@ Recommended fix:
 | Source | Where | Why it appears random |
 | --- | --- | --- |
 | LLM output format variability | DP, FD, promote, override writer | Formatting can change across prompts, models, and backend updates. |
-| Free-form user input for production actions | `/promote` | Ambiguous messages can be parsed differently by the model. |
+| Flexible command-text parsing for production actions | `/promote` | Ambiguous or malformed messages are now deterministically rejected, but user formatting variance can still cause failed parsing. |
 | No schema validation of LLM results | Several LLM workflows | Bad output may be accepted or fail late. |
 | External service variability | HTTP endpoints, MySQL, Webex, Azure OpenAI | Network, rate limits, auth, or upstream data changes affect output. |
 | Process-local mutable state | override writer | Concurrent or restarted bot sessions can lose or mix conversation state if ownership and TTL are not enforced. |
@@ -349,11 +353,14 @@ Recommended fix:
 
 The approval flow should be treated as high risk because it can trigger promotion behavior through `LEROY_AGENT_PROMOTE_URL`.
 
-Recommended controls:
+Currently implemented controls:
 
 - HMAC-signed approval tokens.
-- Short token TTL.
-- Explicit requester/approver validation.
+- Token TTL enforcement.
+- Explicit requester/approver validation in approval handling.
+
+Recommended controls:
+
 - Audit log containing request id, requester, approver, source space, and action result.
 - Idempotency key for promotion calls if the upstream service supports it.
 - Clear separation between plan/preview and apply/execute.

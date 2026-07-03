@@ -140,7 +140,7 @@ sequenceDiagram
     Main->>Bot: start bot.run() in daemon thread
 ```
 
-The bot name is configured as `SatyaSundar`, and approved Webex domains are restricted to `akamai.com`.
+The bot name is configured as `doombot`, and approved Webex domains are restricted to `akamai.com`.
 
 The scheduler setup exists in `lerai/lerai_main.py`, but all scheduled job registration lines are commented out. That means scheduled jobs do not start by default in the current code.
 
@@ -254,7 +254,7 @@ Flow:
 Important behavior:
 
 - The function accepts `check_staleness_only` and `stale_hours`, but the current implementation always fetches and summarizes the diff output. Those parameters are not meaningfully used in the shown code.
-- Non-empty stderr is printed as a warning but does not fail the command if return code is zero.
+- Non-empty stderr is logged as a warning (with redaction) but does not fail the command if return code is zero.
 
 ### Airflow Error Summary
 

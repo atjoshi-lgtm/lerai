@@ -128,7 +128,9 @@ python3 -m py_compile lerai/FD_AMA.py lerai/leroy_overrides_writer.py lerai/csv_
 python3 -m py_compile lerai/log_error_summary.py
 ```
 
-A scan for active Python `print()` calls was also run and found no uncommented matches.
+A scan for active Python `print()` calls was also run during this pass and found no uncommented matches at that time.
+
+Current repository state includes manual CLI `print()` usage in `lerai/leroy_overrides_writer.py` under the `__main__` path. These calls are for direct CLI output and are not part of Webex command handling.
 
 ## Remaining Follow-Up Work
 

@@ -51,7 +51,7 @@ def lerai_main():
 
     bot = WebexBot(
         teams_bot_token=BOT_TOKEN,
-        bot_name="SatyaSundar",
+        bot_name="doombot",
         include_demo_commands=False,
         approved_domains=['akamai.com']
     )

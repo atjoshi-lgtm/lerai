@@ -1,0 +1,42 @@
+[
+  {
+    "query": "Remove map mm2 from Germany. Ticket is LEROYOPS-61.",
+    "intent": {
+      "Ticket-id": "LEROYOPS-61",
+      "Mapnames": ["mm2"],
+      "Geographical-Scope": {
+        "Region-country": ["DE"]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected_toml": "[[override-records]]\nTicket-id = \"LEROYOPS-61\"\nMapnames = [\"mm2\"]\nRegion-country = [\"DE\"]\nAccess-control = \"must-exclude\""
+  },
+  {
+    "query": "Multiply the traffic for map us by 2 across North America.",
+    "intent": {
+      "Mapnames": ["us"],
+      "Geographical-Scope": {
+        "Region-geo": ["NA"]
+      },
+      "Override-Directive": {
+        "Traffic-multiplier": 2
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"us\"]\nRegion-geo = [\"NA\"]\nTraffic-multiplier = 2"
+  },
+  {
+    "query": "Set quota percentage of mch-ff-lo to 90% in region 50565.",
+    "intent": {
+      "Mapnames": ["mch-ff-lo"],
+      "Geographical-Scope": {
+        "Region-number": [50565]
+      },
+      "Override-Directive": {
+        "Quota-pct": [90]
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"mch-ff-lo\"]\nRegion-number = [50565]\nQuota-pct = [90]"
+  }
+]

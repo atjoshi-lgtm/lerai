@@ -22,13 +22,15 @@
           "Region-default": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "const": "default"
             }
           },
           "Region-geo": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "enum": ["NA", "LA", "APAC", "EMEA"]
             }
           },
           "Region-country": {

@@ -9,6 +9,20 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+VALID_REGION_GEO_CODES = {"NA", "LA", "APAC", "EMEA"}
+REGION_GEO_SYNONYMS = {
+    "north america": "NA",
+    "na": "NA",
+    "latin america": "LA",
+    "latam": "LA",
+    "la": "LA",
+    "asia pacific": "APAC",
+    "apac": "APAC",
+    "europe middle east africa": "EMEA",
+    "europe middle east and africa": "EMEA",
+    "emea": "EMEA",
+}
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -116,6 +130,78 @@ def _extract_ticket_id_from_text(text: str) -> Optional[str]:
         return None
     match = re.search(r"\b([A-Z]+-\d+)\b", text)
     return match.group(1) if match else None
+
+
+def _normalize_region_geo_code(value: str) -> Optional[str]:
+    """Maps free-form geo names/codes to strict Region-geo values."""
+    if not isinstance(value, str):
+        return None
+
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    upper = cleaned.upper()
+    if upper in VALID_REGION_GEO_CODES:
+        return upper
+
+    normalized_key = re.sub(r"[\s_-]+", " ", cleaned).strip().lower()
+    return REGION_GEO_SYNONYMS.get(normalized_key)
+
+
+def _normalize_geographical_scope(geo_scope: Dict[str, Any]) -> Dict[str, Any]:
+    """Applies deterministic normalization for geographical scope values."""
+    if not isinstance(geo_scope, dict):
+        return geo_scope
+
+    if "Region-metro" in geo_scope and geo_scope["Region-metro"]:
+        geo_scope["Region-metro"] = [
+            m.strip().replace(" ", "_") if isinstance(m, str) else m
+            for m in geo_scope["Region-metro"]
+        ]
+
+    if "Region-geo" in geo_scope and geo_scope["Region-geo"]:
+        normalized_geo_vals = []
+        for raw in geo_scope["Region-geo"]:
+            if isinstance(raw, str):
+                mapped = _normalize_region_geo_code(raw)
+                normalized_geo_vals.append(mapped or raw)
+            else:
+                normalized_geo_vals.append(raw)
+        geo_scope["Region-geo"] = normalized_geo_vals
+
+    if "Region-default" in geo_scope and geo_scope["Region-default"]:
+        raw_default_vals = geo_scope["Region-default"]
+        inferred_geo_vals = []
+        normalized_default = []
+
+        for raw in raw_default_vals:
+            if not isinstance(raw, str):
+                continue
+
+            cleaned = raw.strip()
+            if not cleaned:
+                continue
+
+            if cleaned.lower() in {"default", "all", "global", "worldwide", "everywhere"}:
+                normalized_default.append("default")
+                continue
+
+            mapped_geo = _normalize_region_geo_code(cleaned)
+            if mapped_geo:
+                inferred_geo_vals.append(mapped_geo)
+
+        if inferred_geo_vals and not normalized_default:
+            geo_scope.pop("Region-default", None)
+            existing_geo = geo_scope.get("Region-geo", [])
+            if not isinstance(existing_geo, list):
+                existing_geo = []
+            combined = existing_geo + inferred_geo_vals
+            geo_scope["Region-geo"] = list(dict.fromkeys(combined))
+        elif normalized_default:
+            geo_scope["Region-default"] = ["default"]
+
+    return geo_scope
     
 def validate_extraction(data: Dict[str, Any]) -> tuple[bool, str]:
     """Ensures the LLM adhered to the strict LeRoy constraints."""
@@ -213,8 +299,7 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
         
         # --- Deterministic Normalization ---
         geo_scope = extracted_data.get("Geographical-Scope", {})
-        if "Region-metro" in geo_scope and geo_scope["Region-metro"]:
-            geo_scope["Region-metro"] = [m.replace(" ", "_") for m in geo_scope["Region-metro"]]
+        extracted_data["Geographical-Scope"] = _normalize_geographical_scope(geo_scope)
         logger.info("Normalized extraction payload:\n%s", _as_json(extracted_data))
         is_valid, validation_msg = validate_extraction(extracted_data)
         logger.info(

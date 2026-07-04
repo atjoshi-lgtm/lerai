@@ -404,7 +404,7 @@ The suite is useful but intentionally narrow. It does not currently cover:
 4. Real Query2, LeROY, Footprint, or internal HTTP endpoints.
 5. End-to-end scheduled jobs.
 6. Full promotion approval handler behavior with mocked Webex API and LeROY HTTP responses.
-7. TOML syntax/schema validation for LeROY override generation.
+7. End-to-end tests for the new override pipeline modules (entity extraction, conflict detection, TOML generation, and schema validation).
 8. Request correlation id propagation.
 9. Production logging handler configuration.
 
@@ -413,6 +413,6 @@ The suite is useful but intentionally narrow. It does not currently cover:
 1. Handler-level tests for `/promote` and `/approve` with mocked Webex and LeROY clients.
 2. Config adoption tests as each service module moves to `lerai/config.py` helpers.
 3. Tests for user-facing error messages that should not expose raw exception detail.
-4. Tests for TOML parsing and schema validation in `lerai/leroy_overrides_writer.py`.
+4. Tests for TOML parsing and schema validation in `lerai/overrides_pipeline/toml_generator.py` and orchestration behavior in `lerai/leroy_overrides_writer.py`.
 5. Tests for request correlation id creation and propagation once that feature is added.
 6. Tests for retry behavior around idempotent read-only HTTP calls.

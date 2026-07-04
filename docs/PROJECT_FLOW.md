@@ -51,6 +51,7 @@ requirements.txt                      Runtime dependency list added during clean
 README.md                             Minimal project README.
 openai_agent/openai_agent_client.py   Shared Azure OpenAI HTTP client.
 lerai/                                Main application package.
+lerai/overrides_pipeline/             Deterministic override extraction/conflict/validation pipeline.
 lerai/prompts/                        Prompt templates used by LLM workflows.
 tests/                                No-server unit tests for payload and parser behavior.
 ```
@@ -72,7 +73,10 @@ Important modules under `lerai/`:
 | `lerai/quota_exceed.py` | Calls Query2 endpoint and formats quota/object-limit exceedance results. |
 | `lerai/promote.py` | Implements promotion request and approval token flow. |
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
-| `lerai/leroy_overrides_writer.py` | Generates TOML override stanzas from `override_schema.json` and ticket text using the LLM. |
+| `lerai/leroy_overrides_writer.py` | Orchestrates override intent extraction, conflict checks, TOML generation, schema validation, and Webex formatting. |
+| `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. |
+| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and detects literal conflicts plus hierarchy-risk warnings. |
+| `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. |
 | `lerai/scheduled_jobs.py` | Contains daily report jobs; scheduler registration is currently commented out. |
 | `lerai/mysql_client.py` | Opens MySQL connections and returns query results as CSV-like text. |
 | `lerai/netarch_queries.py` | Stores SQL used by DP workflows. |
@@ -94,6 +98,9 @@ graph TD
     Router --> Quota[quota_exceed.py]
     Router --> Promote[promote.py]
     Router --> Override[leroy_overrides_writer.py]
+    Override --> Extract[overrides_pipeline/entity_extractor.py]
+    Override --> Conflict[overrides_pipeline/conflict_detector.py]
+    Override --> Gen[overrides_pipeline/toml_generator.py]
 
     CsvDiff --> Azure[Azure OpenAI via openai_agent_client.py]
     Logs --> Azure
@@ -101,7 +108,10 @@ graph TD
     DP --> Azure
     FD --> Azure
     Promote --> Azure
-    Override --> Azure
+    Extract --> Azure
+    Conflict --> Tomlkit[tomlkit parser]
+    Gen --> Tomlkit
+    Gen --> JsonSchema[jsonschema validator]
 
     DP --> MySQL[MySQL netarch database]
     FD --> Footprint[Footprint API]
@@ -185,7 +195,7 @@ sequenceDiagram
 | `/approve` | `ApproveCommand` | `handle_approval_request()` | Approves a pending promotion request. |
 | `query_variance` | `QueryVarianceCommand` | `check_query2_for_variance_addition()` | Reports LR regions that need Query2 vsize variance addition. |
 | `quota_exceed` | `QuotaExceedCommand` | `check_query2_for_quota_exceed()` | Reports fp-config or object-count quota exceedance. |
-| `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Generates a LeROY override TOML stanza from user text. |
+| `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Runs a deterministic override pipeline: structured extraction, conflict detection, TOML generation, and schema validation. |
 
 Defined but not actively registered:
 
@@ -467,17 +477,22 @@ Code path:
 - Command: `/write_override`
 - Command class: `LeroyOverrideWriterCommand`
 - Module: `lerai/leroy_overrides_writer.py`
-- Main function: `write_toml(userquestion)`
+- Main function: `write_toml(user_question, xml_string=None)`
 
 Flow:
 
-1. Load `override_schema.json` from the current working directory.
-2. Load `lerai/prompts/leroy_overrides_writer_prompt.txt`.
-3. Build a prompt containing the schema and ticket description.
-4. Ask Azure OpenAI using model `gpt-5.2` and `temperature=0`.
-5. Return the model output as a string.
+1. Extract intent via `overrides_pipeline/entity_extractor.py`.
+2. Parse current `override.toml` and detect conflicts via `overrides_pipeline/conflict_detector.py`.
+3. Build TOML `[[override-records]]` stanza via `overrides_pipeline/toml_generator.py` and `tomlkit`.
+4. Parse and validate the generated record against `override_schema.json` via `jsonschema`.
+5. Return a Webex-ready Markdown response with conflict messaging and a TOML code block.
 
-The current implementation does not validate that returned TOML conforms to the schema before sending it back.
+Key behaviors in the current implementation:
+
+- Extraction supports optional Jira XML context through `xml.etree.ElementTree` parsing.
+- Extraction enforces exactly one geographical scope and one override directive after tool-call argument parsing.
+- Conflict detection blocks literal overlaps and returns non-blocking warnings for broader hierarchy scopes.
+- Generation/validation is deterministic after extraction: no free-form model text is accepted as final TOML.
 
 ### Scheduled Jobs
 
@@ -552,7 +567,7 @@ Prompt files live under `lerai/prompts/`.
 | `dp_proof_check_prompt.txt` | `DP_AMA.py` | Verification prompt for candidate answer/proof. |
 | `dp_proof_check_tail_prompt.txt` | `DP_AMA.py` | Tail appended to proof-check prompt. |
 | `expected_observed_summary_prompt.txt` | `expected_observed_comparison.py` | Expected/observed offload summary instructions. |
-| `leroy_overrides_writer_prompt.txt` | `leroy_overrides_writer.py` | LeROY override generation instructions. |
+| `leroy_overrides_writer_prompt.txt` | legacy override writer path | Legacy prompt retained in repo but not used by the current deterministic pipeline. |
 | `offline_prod_prompt.txt` | `csv_env_diff.py` | Offline versus production diff summary instructions. |
 
 ## Libraries Used
@@ -564,6 +579,8 @@ Prompt files live under `lerai/prompts/`.
 | `requests` | Sends HTTP requests to Azure OpenAI, Footprint API, and LeROY promotion endpoint. |
 | `pymysql` | Connects to MySQL/netarch database and returns rows. |
 | `apscheduler` | Provides `BackgroundScheduler`; scheduler jobs exist but are currently commented out. |
+| `tomlkit` | Parses live `override.toml` and builds AST-preserving override stanzas. |
+| `jsonschema` | Validates generated override records against `override_schema.json`. |
 | `urllib.request`, `urllib.parse`, `ssl` | Used for certificate-authenticated internal HTTP endpoints. |
 | `unittest` | Used for no-server tests under `tests/`. |
 
@@ -607,5 +624,7 @@ A recent cleanup pass made the following static changes:
 - Added `lerai/config.py` with shared environment parsing helpers and tests.
 - Hardened Query2 variance/quota response parsing for malformed JSON, bad row shapes, corrected quota headers, and non-numeric quota values.
 - Added `lerai/logging_utils.py` and replaced active high-risk `print()` calls with structured logging and redaction.
+- Replaced the legacy override writer path with modular pipeline stages in `lerai/overrides_pipeline/`.
+- Added deterministic TOML construction and schema validation for `/write_override` using `tomlkit` and `jsonschema`.
 
 The code still needs broader architecture cleanup; see `docs/CODE_QUALITY_REVIEW.md`.

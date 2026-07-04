@@ -144,6 +144,10 @@
       "type": "boolean",
       "description": "If true, LeRoy ignores poor footprint descriptor quality for the specified maps."
     },
+    "Force-accept-delta-in-traffic-input": {
+      "type": "boolean",
+      "description": "If true, bypasses the check that aborts maprule allocation if a map's traffic jumped by a large amount."
+    },
     "LR-freeze-sticky-maps": {
       "type": "boolean",
       "description": "If true, all sticky maps are assigned to the LR even if space is insufficient."

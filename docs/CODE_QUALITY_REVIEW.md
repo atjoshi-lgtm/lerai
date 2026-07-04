@@ -13,7 +13,7 @@ LeRAI is a useful operational assistant, but the current implementation is still
 3. Some modules still use mutable global or process-local state, which can behave unpredictably under concurrent or restarted bot usage.
 4. Configuration, logging, imports, and validation are scattered across modules instead of centralized.
 
-Recent cleanup fixed several obvious runtime problems, hardened the shared Azure OpenAI client, signed promotion approval tokens, replaced `/promote` LLM extraction with deterministic parsing, and removed the DP global state. The next work should prioritize config validation, structured logging, request correlation, output validation, and retry/error handling.
+Recent cleanup fixed several obvious runtime problems, hardened the shared Azure OpenAI client, signed promotion approval tokens, replaced `/promote` LLM extraction with deterministic parsing, removed the DP global state, and refactored `/write_override` into a deterministic multi-stage pipeline with `tomlkit` and `jsonschema` validation. The next work should prioritize config validation, structured logging, request correlation, output validation, and retry/error handling.
 
 Current local validation snapshot (2026-07-03):
 
@@ -35,6 +35,8 @@ These items were improved before this document was written:
 | Promotion token security | `lerai/promote.py`, `tests/test_promote_security.py` | Approval tokens are now HMAC-signed, versioned, and TTL-validated with `PROMOTION_TOKEN_SECRET` and `PROMOTION_TOKEN_TTL_SECONDS`. |
 | Promotion parsing | `lerai/promote.py`, `tests/test_promote_security.py` | `/promote` now uses deterministic parser patterns instead of LLM extraction. |
 | DP request state | `lerai/DP_AMA.py`, `lerai/lerai_commands.py`, `tests/test_dp_ama_state.py` | `dplist_save` was removed; DP candidate and verification paths can share explicit request-scoped DP data. |
+| Override pipeline modularization | `lerai/leroy_overrides_writer.py`, `lerai/overrides_pipeline/*` | `/write_override` now uses modular extraction, conflict detection, deterministic TOML generation, and schema validation. |
+| Override TOML validation | `lerai/overrides_pipeline/toml_generator.py` | Generated stanza is parsed by `tomlkit` and validated against `override_schema.json` via `jsonschema` before returning to users. |
 | Config helper foundation | `lerai/config.py`, `tests/test_config.py` | Shared helpers now exist for required, optional, integer, boolean, JSON, and file-based environment settings. |
 | Query2 parser hardening | `lerai/query2_variance_addition.py`, `lerai/quota_exceed.py`, `tests/test_query_response_parsing.py` | Malformed JSON, non-object responses, bad row shapes, corrected quota headers, and non-numeric quota values are now handled with explicit error messages. |
 
@@ -76,14 +78,13 @@ Recommended next controls:
 Locations:
 
 - `lerai/DP_AMA.py`
-- `lerai/leroy_overrides_writer.py`
 - `lerai/FD_AMA.py`
 
 Examples:
 
 - `/promote` previously asked the LLM to identify the approver and promotion token from free-form text. This has been fixed; it now uses deterministic parser patterns.
 - `LRDPDevCommand` still extracts `<answer>` and `<verdict>` tags from LLM output using regex.
-- `leroy_overrides_writer.py` returns model-generated TOML without validating the generated content against a TOML parser and schema.
+- `/write_override` now extracts structured tool-call arguments and validates generated TOML via `tomlkit` and `jsonschema` before returning output.
 - `FD_AMA.py` trusts model-generated tool arguments after `json.loads()`.
 
 Why this can cause unreliable or random behavior:
@@ -103,28 +104,23 @@ Recommended fix:
 
 - Use structured output schemas for LLM tasks that truly need model extraction.
 - Validate all parsed LLM output with explicit schemas before use.
-- For TOML output, parse TOML and validate against a maintained schema before returning it.
+- Keep extending the override pipeline with cross-field business validation (for example, mapname/value cardinality and LR-level mapname omission rules).
 
 ### 3. Remaining Global or Process-Local State Can Cross-Contaminate Requests
-
-Locations:
-
-- `lerai/leroy_overrides_writer.py`: `webex_thread_chatgpt_history`
 
 Problems:
 
 - `DP_AMA.py` previously stored the latest DP query result in `dplist_save`. That global has been removed.
-- `webex_thread_chatgpt_history` is a module-level dict without explicit eviction, ownership, or persistence semantics.
+- The previous override-writer module-level chat history state has been removed in the pipeline refactor.
 
 Why this can cause unreliable or random behavior:
 
-- User-specific context can leak across requests if thread/session identifiers are not handled carefully.
-- In-memory state disappears on process restart.
+- Any future reintroduction of process-local session caches could still leak context or reset unexpectedly after restarts.
 
 Recommended fix:
 
-- For multi-turn state, use a session object keyed by Webex room/thread/user with TTL and size limits.
-- Add tests for override-writer session isolation if multi-turn behavior is kept.
+- Keep workflows stateless by default; if multi-turn state is reintroduced, enforce explicit ownership keys, TTL, and size limits.
+- Add explicit tests whenever request/session state is introduced.
 
 ### 4. External Service Calls Have Little Resilience
 
@@ -339,9 +335,8 @@ Recommended fix:
 | --- | --- | --- |
 | LLM output format variability | DP, FD, promote, override writer | Formatting can change across prompts, models, and backend updates. |
 | Flexible command-text parsing for production actions | `/promote` | Ambiguous or malformed messages are now deterministically rejected, but user formatting variance can still cause failed parsing. |
-| No schema validation of LLM results | Several LLM workflows | Bad output may be accepted or fail late. |
+| Partial schema validation of LLM results | Several LLM workflows (notably DP/FD paths) | Some workflows still accept weakly validated model output; override generation now validates post-generation TOML against schema. |
 | External service variability | HTTP endpoints, MySQL, Webex, Azure OpenAI | Network, rate limits, auth, or upstream data changes affect output. |
-| Process-local mutable state | override writer | Concurrent or restarted bot sessions can lose or mix conversation state if ownership and TTL are not enforced. |
 | Large prompt inputs | logs, diffs, DB results | Token size, latency, and truncation vary by data volume. |
 | No retries | most external calls | Transient failures are exposed as command failures. |
 | Missing request correlation | all workflows | Failures are hard to trace, making behavior seem inconsistent. |
@@ -396,6 +391,7 @@ Current tests cover only a small slice. The most important missing tests are:
 | Promotion tokens | Tests now cover valid token, expired token, tampered token, and missing secret. Add wrong-approver handler-level tests when Webex activity handling is mocked. |
 | Promotion parsing | Tests now cover deterministic parser cases. Add handler-level tests for ambiguous command rejection with guidance. |
 | LLM output validation | malformed JSON, Markdown-wrapped JSON, missing fields, extra fields. |
+| Override pipeline validation | Add tests for one-scope/one-directive enforcement, conflict detection collisions, and schema-fail user messaging. |
 | DP concurrency | simultaneous requests do not share state. |
 | Query2 parsing | Basic malformed JSON, row-shape, corrected header, and non-numeric value tests now exist. Add more cases for unexpected headers and upstream contract changes. |
 | Config validation | Helper-level tests now exist. Add module-level tests as each workflow adopts the helpers. |
@@ -411,9 +407,9 @@ These can be implemented and tested without a live Webex bot:
 
 1. Wire existing modules to the new config helpers for required env vars and cert/key paths.
 2. Add request correlation ids at command entry.
-3. Add TOML parsing and schema validation for override writer output.
+3. Add cross-field business-rule validation to the override pipeline (for example, mapname/value cardinality and LR-level directive/mapname constraints).
 4. Add unit tests for handler-level promotion authorization and module-level config adoption.
-5. Add explicit session ownership and TTL for `webex_thread_chatgpt_history` if it is used.
+5. Add unit tests for override pipeline edge cases and user-facing conflict messaging.
 
 ### Phase 2: No-Server Plus Mocked Service Tests
 

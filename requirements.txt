@@ -3,3 +3,5 @@ pymysql
 requests
 webex-bot
 webexteamssdk
+tomlkit
+jsonschema

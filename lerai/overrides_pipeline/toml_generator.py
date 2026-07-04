@@ -7,6 +7,14 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
+def _as_json(value: Any) -> str:
+    """Best-effort pretty serialization for runtime-generated objects."""
+    try:
+        return json.dumps(value, default=str, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        return str(value)
+
 def build_toml_string(intent: Dict[str, Any]) -> str:
     """
     Programmatically builds a TOML string from the structured intent dictionary.
@@ -16,9 +24,10 @@ def build_toml_string(intent: Dict[str, Any]) -> str:
     # Create an Array of Tables (AOT) to represent [[override-records]]
     aot = tomlkit.aot()
     record = tomlkit.table()
+    logger.info("Building TOML from intent:\n%s", _as_json(intent))
     
     # 1. Add Metadata
-    if "Ticket-id" in intent:
+    if intent.get("Ticket-id"):
         record["Ticket-id"] = intent["Ticket-id"]
     if "Start-time" in intent:
         record["Start-time"] = intent["Start-time"]
@@ -29,18 +38,22 @@ def build_toml_string(intent: Dict[str, Any]) -> str:
         
     # 2. Add Geographical Scope
     geo_dict = intent.get("Geographical-Scope", {})
+    logger.info("Geographical scope object:\n%s", _as_json(geo_dict))
     for key, value in geo_dict.items():
         record[key] = value
         
     # 3. Add Override Directive
     dir_dict = intent.get("Override-Directive", {})
+    logger.info("Override directive object:\n%s", _as_json(dir_dict))
     for key, value in dir_dict.items():
         record[key] = value
         
     aot.append(record)
     doc.append("override-records", aot)
-    
-    return tomlkit.dumps(doc)
+
+    toml_output = tomlkit.dumps(doc)
+    logger.info("Built TOML record object:\n%s", _as_json(record))
+    return toml_output
 
 def validate_stanza(toml_string: str, schema_dict: Dict[str, Any]) -> bool:
     """
@@ -56,8 +69,13 @@ def validate_stanza(toml_string: str, schema_dict: Dict[str, Any]) -> bool:
         # Convert tomlkit internal objects to native Python dict for jsonschema
         record = records[0]
         clean_record = json.loads(json.dumps(record))
+        logger.info(
+            "Prepared record for schema validation:\n%s",
+            _as_json(clean_record),
+        )
         
         jsonschema.validate(instance=clean_record, schema=schema_dict)
+        logger.info("Schema validation passed for record:\n%s", _as_json(clean_record))
         return True
         
     except jsonschema.exceptions.ValidationError as e:

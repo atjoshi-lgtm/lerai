@@ -1,0 +1,6 @@
+{
+  "hard_conflict": "⚠️ **Conflict Detected** ⚠️\n\n{conflict_message}\n\nPlease remove the conflicting stanza from `override.toml` before proceeding.",
+  "warning_note": "\n> **Note:** {warning_message}\n",
+  "success": "✅ **Override Stanza Generated Successfully**\n{conflict_warning}\nPlease review the generated configuration below:\n\n```toml\n{toml_stanza}\n```\n\n*If this looks correct, you may copy and paste it into `override.toml`.*",
+  "error": "❌ **Error generating override:**\n\n`{error_message}`\n\nPlease check your input and try again."
+}

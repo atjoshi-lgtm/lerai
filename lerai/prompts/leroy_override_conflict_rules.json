@@ -1,0 +1,26 @@
+{
+  "scope_keys": [
+    "Region-default",
+    "Region-geo",
+    "Region-country",
+    "Region-metro",
+    "Region-number"
+  ],
+  "metadata_keys": [
+    "Ticket-id",
+    "Start-time",
+    "End-time",
+    "Mapnames"
+  ],
+  "warning_scope_keys": [
+    "Region-geo",
+    "Region-country"
+  ],
+  "messages": {
+    "parse_error": "Error parsing existing TOML: {error}",
+    "invalid_intent": "Invalid intent structure: Missing scope or directive.",
+    "literal_conflict": "Conflict detected! Your request overlaps exactly with existing records from ticket(s): {tickets}. You must manually remove the old stanzas before adding this new one.",
+    "broad_scope_warning": "Note: You are setting a broad {scope_key} rule. Ensure it doesn't conflict with deeper, region-specific topology overrides.",
+    "no_conflict": "No conflicts detected. Safe to proceed."
+  }
+}

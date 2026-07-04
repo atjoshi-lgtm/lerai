@@ -3,7 +3,6 @@
   "title": "Leroy Override Stanza",
   "description": "Schema for a TOML override stanza used to configure Leroy maprule overrides.",
   "type": "object",
-  "required": ["Ticket-id"],
   "properties": {
     "Ticket-id": {
       "type": "string",

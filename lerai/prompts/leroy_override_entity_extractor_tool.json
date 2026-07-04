@@ -1,0 +1,97 @@
+{
+  "name": "extract_leroy_override_intent",
+  "description": "Extracts configuration parameters for a LeRoy override based on a user request and Jira ticket.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "Ticket-id": {
+        "type": "string",
+        "description": "Optional Jira ticket ID (e.g., LEROYOPS-61)."
+      },
+      "Mapnames": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of maprules."
+      },
+      "Geographical-Scope": {
+        "type": "object",
+        "description": "Exactly ONE geographical scope.",
+        "properties": {
+          "Region-default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Region-geo": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Region-country": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Region-metro": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Region-number": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "Override-Directive": {
+        "type": "object",
+        "description": "Exactly ONE override directive and its corresponding value.",
+        "properties": {
+          "Access-control": {
+            "type": "string",
+            "enum": [
+              "must-include",
+              "must-exclude",
+              "allowed"
+            ]
+          },
+          "Quota-tb": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "Traffic-multiplier": {
+            "type": "number"
+          },
+          "BLC-only": {
+            "type": "boolean"
+          },
+          "LR-disk-capacity-tb": {
+            "type": "number"
+          }
+        }
+      },
+      "Start-time": {
+        "type": "integer",
+        "description": "Unix epoch start time if specified."
+      },
+      "End-time": {
+        "type": "integer",
+        "description": "Unix epoch end time if specified."
+      }
+    },
+    "required": [
+      "Geographical-Scope",
+      "Override-Directive"
+    ]
+  }
+}

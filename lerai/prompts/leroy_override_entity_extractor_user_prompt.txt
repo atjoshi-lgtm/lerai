@@ -1,0 +1,8 @@
+User Request:
+{{USER_REQUEST}}
+
+Jira Ticket Context (JSON or None):
+{{JIRA_TICKET_CONTEXT}}
+
+Task:
+Extract a single valid LeRoy override intent payload using the provided function/tool schema.

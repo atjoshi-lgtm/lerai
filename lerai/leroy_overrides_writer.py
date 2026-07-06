@@ -155,11 +155,8 @@ def write_toml(user_question: str, xml_string: Optional[str] = None) -> str:
                     }
                 ),
             )
-            if has_conflict:
-                # If there's a hard conflict, stop and inform the user immediately
-                return _render_template("hard_conflict", conflict_message=msg)
-            elif msg != no_conflict_message:
-                # Capture the non-blocking warning (like broad geo rules)
+            if has_conflict or msg != no_conflict_message:
+                # Surface all conflict/warning messages as non-blocking warnings
                 conflict_warning = _render_template("warning_note", warning_message=msg)
                 logger.info("Conflict warning generated:\n%s", _as_json({"conflict_warning": conflict_warning}))
         

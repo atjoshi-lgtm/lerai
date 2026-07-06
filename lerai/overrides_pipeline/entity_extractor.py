@@ -232,7 +232,6 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
         {"role": "user", "content": user_content}
     ]
 
-    # Intentionally avoid logging prompt/message content.
     logger.info(
         "Prepared extractor request metadata:\n%s",
         _as_json(
@@ -240,6 +239,7 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
                 "message_count": len(messages),
                 "message_roles": [m.get("role") for m in messages],
                 "has_ticket_context": bool(ticket_data),
+                "user_query": user_text,
             }
         ),
     )

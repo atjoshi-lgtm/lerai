@@ -19,7 +19,7 @@
   "messages": {
     "parse_error": "Error parsing existing TOML: {error}",
     "invalid_intent": "Invalid intent structure: Missing scope or directive.",
-    "literal_conflict": "Conflict detected! Your request overlaps exactly with existing records from ticket(s): {tickets}. You must manually remove the old stanzas before adding this new one.",
+    "literal_conflict": "Warning: Your request overlaps with existing records from ticket(s): {tickets}. Please review and remove any outdated stanzas from `override.toml` if this override supersedes them.",
     "broad_scope_warning": "Note: You are setting a broad {scope_key} rule. Ensure it doesn't conflict with deeper, region-specific topology overrides.",
     "no_conflict": "No conflicts detected. Safe to proceed."
   }

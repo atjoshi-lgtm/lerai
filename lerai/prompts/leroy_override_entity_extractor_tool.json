@@ -86,12 +86,83 @@
           "Quota-multiplier": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "Traffic-multiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "Traffic-gbps": {
+            "type": ["number", "array"],
+            "items": { "type": "number", "exclusiveMinimum": 0 },
+            "exclusiveMinimum": 0,
+            "description": "Traffic demand in Gbps for the maprule(s)."
+          },
+          "Object-count-quota-pct": {
+            "type": ["number", "array"],
+            "items": { "type": "number", "minimum": 0, "maximum": 100 },
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Object count percentage for the maprule(s)."
+          },
+          "FCS-only": {
+            "type": "boolean",
+            "description": "If true, the map is added only to FCS and not BLC."
+          },
+          "LR-available-servers": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Set the number of available servers in the LR. Requires Region-number scope."
+          },
+          "LR-available-server-multiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Multiply the disk available in the LR by this value. Requires Region-number scope."
+          },
+          "LR-effcap-gbps": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Set the flitcap of the large region in Gbps."
+          },
+          "LR-effcap-multiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Multiply the flitcap of the large region by this value."
+          },
+          "Sticky-map-bonus-coefficient": {
+            "type": ["number", "array"],
+            "items": { "type": "number", "exclusiveMinimum": 0 },
+            "exclusiveMinimum": 0,
+            "description": "Override the default sticky map bonus coefficients for the specified maprule(s)."
+          },
+          "Force-accept-disk-quota": {
+            "type": "boolean",
+            "description": "If true, LeRoy accepts increased/decreased footprint requirements without reverting."
+          },
+          "Force-accept-poor-quality-fd": {
+            "type": "boolean",
+            "description": "If true, LeRoy ignores poor footprint descriptor quality for the specified maps."
+          },
+          "Force-accept-delta-in-traffic-input": {
+            "type": "boolean",
+            "description": "If true, bypasses the check that aborts maprule allocation if a map's traffic jumped by a large amount."
+          },
+          "LR-freeze-sticky-maps": {
+            "type": "boolean",
+            "description": "If true, all sticky maps are assigned to the LR even if space is insufficient."
+          },
+          "LR-Acknowledge-lost-region": {
+            "type": "boolean",
+            "description": "If true, accepts that a missing region was decommissioned and stops publishing stale data."
+          },
+          "LR-Accept-disk-capacity-drop": {
+            "type": "boolean",
+            "description": "If true, accepts a large drop in region disk capacity and uses LeRoy's new solution."
+          },
+          "LR-Accept-flitcap-drop": {
+            "type": "boolean",
+            "description": "If true, accepts a large drop in region flitcap and uses LeRoy's new solution."
           }
-        },
-        "Traffic-multiplier": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    }
+        }
       },
       "Start-time": {
         "type": "integer",

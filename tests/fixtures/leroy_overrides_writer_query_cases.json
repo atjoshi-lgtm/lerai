@@ -38,5 +38,158 @@
       }
     },
     "expected_toml": "[[override-records]]\nMapnames = [\"mch-ff-lo\"]\nRegion-number = [50565]\nQuota-pct = [90]"
+  },
+  {
+    "query": "Allow mm1 to be served in the New York metro area",
+    "intent": {
+      "Mapnames": ["mm1"],
+      "Geographical-Scope": {
+        "Region-metro": ["New_York"]
+      },
+      "Override-Directive": {
+        "Access-control": "must-include"
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"mm1\"]\nRegion-metro = [\"New_York\"]\nAccess-control = \"must-include\""
+  },
+  {
+    "query": "Set the object count quota for mch-ff-so to 5% in all large regions by default",
+    "intent": {
+      "Mapnames": ["mch-ff-so"],
+      "Geographical-Scope": {
+        "Region-default": ["default"]
+      },
+      "Override-Directive": {
+        "Object-count-quota-pct": [5]
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"mch-ff-so\"]\nRegion-default = [\"default\"]\nObject-count-quota-pct = [5]"
+  },
+  {
+    "query": "Multiply the traffic for the us map by 2 across North America.",
+    "intent": {
+      "Mapnames": [
+        "us"
+      ],
+      "Geographical-Scope": {
+        "Region-geo": [
+          "NA"
+        ]
+      },
+      "Override-Directive": {
+        "Traffic-multiplier": 2
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"us\"]\nRegion-geo = [\"NA\"]\nTraffic-multiplier = 2"
+  },
+  {
+    "query": "Remove mm2 from Germany and France.",
+    "intent": {
+      "Mapnames": [
+        "mm2"
+      ],
+      "Geographical-Scope": {
+        "Region-country": [
+          "DE",
+          "FR"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"mm2\"]\nRegion-country = [\"DE\", \"FR\"]\nAccess-control = \"must-exclude\""
+  },
+  {
+    "query": "Set the disk quota for map w25 to 40TB and map mm1 to 80TB in region 49440.",
+    "intent": {
+      "Mapnames": [
+        "w25",
+        "mm1"
+      ],
+      "Geographical-Scope": {
+        "Region-number": [
+          49440
+        ]
+      },
+      "Override-Directive": {
+        "Quota-tb": [
+          40,
+          80
+        ]
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"w25\", \"mm1\"]\nRegion-number = [49440]\nQuota-tb = [40, 80]"
+  },
+  {
+    "query": "Force accept the disk quota changes for cw-d-us, cw-d-us-web, and cw-s-au in the default regions.",
+    "intent": {
+      "Mapnames": [
+        "cw-d-us",
+        "cw-d-us-web",
+        "cw-s-au"
+      ],
+      "Geographical-Scope": {
+        "Region-default": [
+          "default"
+        ]
+      },
+      "Override-Directive": {
+        "Force-accept-disk-quota": true
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"cw-d-us\", \"cw-d-us-web\", \"cw-s-au\"]\nRegion-default = [\"default\"]\nForce-accept-disk-quota = true"
+  },
+  {
+    "query": "Freeze sticky maps for w4 and w5 in region 52598.",
+    "intent": {
+      "Geographical-Scope": {
+        "Region-number": [
+          52598
+        ]
+      },
+      "Override-Directive": {
+        "LR-freeze-sticky-maps": true
+      }
+    },
+    "expected_toml": "[[override-records]]\nRegion-number = [52598]\nLR-freeze-sticky-maps = true"
+  },
+  {
+    "comment": "LR-freeze-sticky-maps = true should be present, but the Mapnames array MUST be entirely omitted/empty. If Mapnames is included, the LLM failed the system prompt instructions.",
+    "query": "Acknowledge the lost region 49440.",
+    "intent": {
+      "Geographical-Scope": {
+        "Region-number": [
+          49440
+        ]
+      },
+      "Override-Directive": {
+        "LR-Acknowledge-lost-region": true
+      }
+    },
+    "expected_toml": "[[override-records]]\nRegion-number = [49440]\nLR-Acknowledge-lost-region = true"
+  },
+  {
+    "query": "Add a rule to exclude w4, w5, w155, w105, w106, w107, and w108 from default regions.",
+    "intent": {
+      "Mapnames": [
+        "w4",
+        "w5",
+        "w155",
+        "w105",
+        "w106",
+        "w107",
+        "w108"
+      ],
+      "Geographical-Scope": {
+        "Region-default": [
+          "default"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected_toml": "[[override-records]]\nMapnames = [\"w4\", \"w5\", \"w155\", \"w105\", \"w106\", \"w107\", \"w108\"]\nRegion-default = [\"default\"]\nAccess-control = \"must-exclude\""
   }
 ]

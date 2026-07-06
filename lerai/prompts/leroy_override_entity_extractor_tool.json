@@ -71,16 +71,27 @@
               "type": "number"
             }
           },
-          "Traffic-multiplier": {
-            "type": "number"
-          },
           "BLC-only": {
             "type": "boolean"
           },
           "LR-disk-capacity-tb": {
             "type": "number"
+          },
+          "Quota-pct": {
+            "type": ["number", "array"],
+            "items": { "type": "number", "minimum": 1, "maximum": 92 },
+            "minimum": 1,
+            "maximum": 92
+          },
+          "Quota-multiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0
           }
-        }
+        },
+        "Traffic-multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    }
       },
       "Start-time": {
         "type": "integer",

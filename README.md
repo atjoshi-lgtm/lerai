@@ -10,18 +10,14 @@ It provides command-driven workflows for:
 - DP and FD question answering,
 - Query2 variance and quota checks,
 - promotion request/approval flow,
-- LeROY override TOML generation.
+- interactive LeROY override TOML generation through a thread-aware agent.
 
 ## Documentation
 
 - Project architecture and flow: `docs/PROJECT_FLOW.md`
-- Code quality and reliability review: `docs/CODE_QUALITY_REVIEW.md`
 - Test suite guide: `docs/TEST_GUIDE.md`
-- Server access and validation steps: `docs/SERVER_ACCESS_NEXT_STEPS.md`
-- Implementation change logs:
-	- `docs/IMPLEMENTATION_CHANGES.md`
-	- `docs/IMPLEMENTATION_CHANGES_CONFIG_QUERY2.md`
-	- `docs/IMPLEMENTATION_CHANGES_LOGGING_REDACTION.md`
+- Agent operating guide: `AGENT.md`
+- Historical implementation and quality notes: `archive/`
 
 ## Local Validation
 

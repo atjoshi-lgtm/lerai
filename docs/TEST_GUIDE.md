@@ -26,6 +26,21 @@ python3 -m unittest tests.test_promote_security
 
 The local environment uses `python3`; `python` may not be available on the PATH.
 
+## Manual Interactive Override-Agent Check
+
+The two most recent `/write_override` commits introduced an interactive LangGraph agent with thread checkpointing and interrupt/resume behavior. In addition to unit tests, run the local CLI harness for a quick manual sanity check:
+
+```bash
+python3 test_cli.py
+```
+
+What to verify manually:
+
+- The CLI prints a unique session thread id.
+- The assistant can ask a follow-up clarification when needed.
+- A follow-up answer resumes the same graph session (instead of restarting).
+- Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
+
 ## Test Files at a Glance
 
 | Test file | Main purpose |

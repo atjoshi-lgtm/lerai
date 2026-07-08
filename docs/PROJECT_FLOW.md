@@ -17,7 +17,7 @@ The bot currently supports these broad categories:
 - Footprint descriptor question answering with tool calls.
 - Query2 variance and quota checks.
 - LeROY promotion request and approval flow.
-- LeROY override TOML generation.
+- Interactive LeROY override TOML generation with thread-aware pause/resume.
 
 The code is mostly organized as one command router plus one module per workflow. There is no full application framework beyond the Webex bot library.
 
@@ -51,8 +51,10 @@ requirements.txt                      Runtime dependency list added during clean
 README.md                             Minimal project README.
 openai_agent/openai_agent_client.py   Shared Azure OpenAI HTTP client.
 lerai/                                Main application package.
-lerai/overrides_pipeline/             Deterministic override extraction/conflict/validation pipeline.
+lerai/override_agent/                 Interactive LangGraph supervisor and tool orchestration.
+lerai/overrides_pipeline/             Deterministic extraction/conflict/validation utilities used by the agent.
 lerai/prompts/                        Prompt templates used by LLM workflows.
+test_cli.py                           Local interactive CLI harness for the override agent.
 tests/                                No-server unit tests for payload and parser behavior.
 ```
 
@@ -73,7 +75,11 @@ Important modules under `lerai/`:
 | `lerai/quota_exceed.py` | Calls Query2 endpoint and formats quota/object-limit exceedance results. |
 | `lerai/promote.py` | Implements promotion request and approval token flow. |
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
-| `lerai/leroy_overrides_writer.py` | Orchestrates override intent extraction, conflict checks, TOML generation, schema validation, and Webex formatting. |
+| `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app, including thread-id resolution and interrupt resume behavior. |
+| `lerai/override_agent/graph.py` | Builds a singleton LangGraph app with a persistent SQLite checkpointer (`lerai_checkpoints.db`). |
+| `lerai/override_agent/nodes.py` | Defines the supervisor node, Azure model wiring, tool routing, and initial input builder. |
+| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, and TOML generation/validation. |
+| `lerai/override_agent/state.py` | Typed graph state (`messages`, `conflict_report`, `draft_toml`). |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. |
 | `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and checks a new intent for conflicts. It loads scope keys, metadata keys, and message templates from `leroy_override_conflict_rules.json`. For each existing `[[override-records]]` stanza it checks three conditions: the geographical scope key and value overlap, the override directive key matches, and the mapname sets intersect (or both are empty, indicating an LR-level rule). If all three conditions hold for any stanza the intent is blocked as a literal conflict and the conflicting ticket IDs are returned. If no literal conflict exists but the incoming scope key is in the configured `warning_scope_keys` set (broad scopes such as `Region-default` or `Region-geo`) a non-blocking warning is returned instead. |
 | `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. |
@@ -97,10 +103,17 @@ graph TD
     Router --> Variance[query2_variance_addition.py]
     Router --> Quota[quota_exceed.py]
     Router --> Promote[promote.py]
-    Router --> Override[leroy_overrides_writer.py]
-    Override --> Extract[overrides_pipeline/entity_extractor.py]
-    Override --> Conflict[overrides_pipeline/conflict_detector.py]
-    Override --> Gen[overrides_pipeline/toml_generator.py]
+    Router --> OverrideEntry[leroy_overrides_writer.py]
+    OverrideEntry --> OverrideGraph[override_agent/graph.py]
+    OverrideGraph --> Supervisor[override_agent/nodes.py supervisor]
+    Supervisor --> ToolNode[LangGraph ToolNode]
+    ToolNode --> ToolExtract[extract_override_intent]
+    ToolNode --> ToolConflict[detect_override_conflicts]
+    ToolNode --> ToolToml[generate_and_validate_toml]
+    ToolExtract --> Extract[overrides_pipeline/entity_extractor.py]
+    ToolConflict --> Conflict[overrides_pipeline/conflict_detector.py]
+    ToolToml --> Gen[overrides_pipeline/toml_generator.py]
+    OverrideGraph --> Checkpoint[(lerai_checkpoints.db)]
 
     CsvDiff --> Azure[Azure OpenAI via openai_agent_client.py]
     Logs --> Azure
@@ -195,7 +208,7 @@ sequenceDiagram
 | `/approve` | `ApproveCommand` | `handle_approval_request()` | Approves a pending promotion request. |
 | `query_variance` | `QueryVarianceCommand` | `check_query2_for_variance_addition()` | Reports LR regions that need Query2 vsize variance addition. |
 | `quota_exceed` | `QuotaExceedCommand` | `check_query2_for_quota_exceed()` | Reports fp-config or object-count quota exceedance. |
-| `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Runs a deterministic override pipeline: structured extraction, conflict detection, TOML generation, and schema validation. |
+| `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Runs the interactive override agent with conversation persistence, conflict checks, interrupt/resume, and threaded Webex replies. |
 
 Defined but not actively registered:
 
@@ -481,18 +494,27 @@ Code path:
 
 Flow:
 
-1. Extract intent via `overrides_pipeline/entity_extractor.py`.
-2. Parse current `override.toml` and detect conflicts via `overrides_pipeline/conflict_detector.py`.
-3. Build TOML `[[override-records]]` stanza via `overrides_pipeline/toml_generator.py` and `tomlkit`.
-4. Parse and validate the generated record against `override_schema.json` via `jsonschema`.
-5. Return a Webex-ready Markdown response with conflict messaging and a TOML code block.
+1. Create or reuse the singleton LangGraph app from `lerai/override_agent/graph.py`.
+2. Resolve a stable `thread_id` for the Webex conversation:
+    - prefer `parentId` if available,
+    - otherwise fall back to message `id`,
+    - and optionally verify parent mapping by calling Webex API.
+3. Check graph state for this thread. If there is a pending interrupt (`current_state.next` is non-empty), resume with `Command(resume=...)`; otherwise seed a new turn with `build_initial_input(...)`.
+4. Run supervisor + tool loop:
+    - `extract_override_intent`: build structured override intent from full synthesized user request,
+    - `detect_override_conflicts`: check intent against live `override.toml`,
+    - `generate_and_validate_toml`: create TOML and validate against `override_schema.json`.
+5. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
+6. If a final AI response is produced:
+    - in Webex mode, post as a threaded reply (`parentId=thread_id`) and return `None` to command handler,
+    - in local/CLI mode, return the markdown text directly.
 
 Key behaviors in the current implementation:
 
-- Extraction supports optional Jira XML context through `xml.etree.ElementTree` parsing.
-- Extraction enforces exactly one geographical scope and one override directive after tool-call argument parsing.
-- Conflict detection blocks literal overlaps and returns non-blocking warnings for broader hierarchy scopes.
-- Generation/validation is deterministic after extraction: no free-form model text is accepted as final TOML.
+- Conversation state is persisted by thread id in `lerai_checkpoints.db`, enabling multi-turn refinement instead of one-shot static tool calling.
+- Conflict handling is interactive: the agent can pause and wait for user resolution, then resume from checkpoint on the next message.
+- The writer now has robust room/thread extraction for varied Webex activity payload shapes.
+- Deterministic safety checks remain in place through `overrides_pipeline/conflict_detector.py` and `overrides_pipeline/toml_generator.py`.
 
 ### Scheduled Jobs
 
@@ -530,6 +552,8 @@ These functions can post reports to Webex spaces. However, scheduler registratio
 | `AZURE_APP_NAME` | `openai_agent/openai_agent_client.py` | Application identity header. |
 | `AZURE_OPENAI_TIMEOUT` | `openai_agent/openai_agent_client.py` | Optional request timeout in seconds. Defaults to 30. |
 | `AZURE_OPENAI_VERIFY_SSL` | `openai_agent/openai_agent_client.py` | Optional TLS verification toggle. Defaults to true. |
+| `AZURE_OPENAI_MODEL` | `lerai/override_agent/nodes.py` | Model name used by override supervisor (defaults to `GPT-5.2`). |
+| `REQUESTS_CA_BUNDLE` | `lerai/override_agent/nodes.py` | Optional CA bundle path used by the `httpx` client for override agent requests. |
 
 ### Database
 
@@ -574,6 +598,7 @@ Prompt files live under `lerai/prompts/`.
 | `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
 | `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent. |
 | `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
+| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for tool order, conflict handling, and context synthesis across user turns. |
 | `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for hard conflict, broad-scope warning, success, and error states returned to the Webex user. |
 
 ## Libraries Used
@@ -583,8 +608,11 @@ Prompt files live under `lerai/prompts/`.
 | `webex-bot` | Provides `WebexBot` and `Command` abstractions for Webex command handling. |
 | `webexteamssdk` | Sends Webex messages and queries Webex people/status APIs. |
 | `requests` | Sends HTTP requests to Azure OpenAI, Footprint API, and LeROY promotion endpoint. |
+| `httpx` | Used by the override agent supervisor LLM client wiring in `override_agent/nodes.py`. |
 | `pymysql` | Connects to MySQL/netarch database and returns rows. |
 | `apscheduler` | Provides `BackgroundScheduler`; scheduler jobs exist but are currently commented out. |
+| `langgraph` | Provides stateful graph orchestration, ToolNode execution, and SQLite checkpointing for the interactive override agent. |
+| `langchain-core`, `langchain-openai` | Provide message/tool abstractions and AzureChatOpenAI integration used by the override supervisor node. |
 | `tomlkit` | Parses live `override.toml` and builds AST-preserving override stanzas. |
 | `jsonschema` | Validates generated override records against `override_schema.json`. |
 | `urllib.request`, `urllib.parse`, `ssl` | Used for certificate-authenticated internal HTTP endpoints. |
@@ -593,7 +621,7 @@ Prompt files live under `lerai/prompts/`.
 ## Tests and No-Server Validation
 
 For a detailed explanation of every current test, see `docs/TEST_GUIDE.md`.
-For the first live-server access window, see `docs/SERVER_ACCESS_NEXT_STEPS.md`.
+For the first live-server access window, see `archive/SERVER_ACCESS_NEXT_STEPS.md`.
 
 Current tests:
 
@@ -636,7 +664,15 @@ A recent cleanup pass made the following static changes:
 - Replaced the legacy override writer path with modular pipeline stages in `lerai/overrides_pipeline/`.
 - Added deterministic TOML construction and schema validation for `/write_override` using `tomlkit` and `jsonschema`.
 
-The code still needs broader architecture cleanup; see `docs/CODE_QUALITY_REVIEW.md`.
+The most recent two commits further changed the override architecture:
+
+- Added `lerai/override_agent/` with a LangGraph supervisor + ToolNode flow for `/write_override`.
+- Added persistent graph checkpointing in `lerai_checkpoints.db` keyed by Webex thread id.
+- Updated `/write_override` to support interruption/resume across user turns in the same thread.
+- Improved Webex thread/room extraction with parent-id fallback and API verification paths.
+- Added `test_cli.py` as a local interactive harness for manual multi-turn testing of interrupts and resume behavior.
+
+Additional historical architecture notes are in `archive/`.
 
 
 

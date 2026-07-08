@@ -116,6 +116,7 @@ Targeted validation by area:
 - Add or update tests for logic changes in core workflows.
 - Keep docs in docs/ aligned with user-visible behavior and command surface.
 - Favor deterministic parsing/validation for safety-critical flows (promotion and overrides).
+- Do not write prompts as string literals in code; all the prompt text should be in `lerai/prompts/`.
 
 ## Communication Style
 - Provide short progress updates during multi-step tasks.

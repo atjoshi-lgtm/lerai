@@ -6,12 +6,11 @@ leroy_overrides_writer.py
 """
 
 import sys
-import os
 import argparse
 import logging
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from functools import lru_cache
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -24,8 +23,6 @@ CONFLICT_RULES_FILE = PROMPTS_DIR / "leroy_override_conflict_rules.json"
 LOG_FILE_PATH = PROJECT_ROOT / "leroy_override_pipeline.log"
 
 from lerai.logging_utils import redact_value
-from lerai.override_agent.graph import get_compiled_graph
-from lerai.override_agent.nodes import build_initial_input
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts
 from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
@@ -124,146 +121,59 @@ def load_current_toml() -> str:
         toml_content = f.read()
     return toml_content
 
-
-def _load_webex_api():
-    try:
-        from webexteamssdk import WebexTeamsAPI
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("Missing required dependency: webexteamssdk") from exc
-    return WebexTeamsAPI
-
-
-def _value_from_message(source: Any, key: str) -> Any:
-    if source is None:
-        return None
-    if isinstance(source, dict):
-        return source.get(key)
-    return getattr(source, key, None)
-
-
-def _extract_thread_id(webex_message: Any) -> str:
-    """Use parentId if present, otherwise fallback to the message id."""
-    candidates = [
-        webex_message,
-        _value_from_message(webex_message, "message"),
-        _value_from_message(webex_message, "data"),
-    ]
-
-    for candidate in candidates:
-        parent_id = _value_from_message(candidate, "parentId")
-        if parent_id:
-            return str(parent_id)
-
-    for candidate in candidates:
-        message_id = _value_from_message(candidate, "id")
-        if message_id:
-            return str(message_id)
-
-    return "default-thread"
-
-
-def _extract_room_id(webex_message: Any) -> str:
-    direct_room_id = _value_from_message(webex_message, "roomId")
-    if direct_room_id:
-        return str(direct_room_id)
-
-    if isinstance(webex_message, dict):
-        target = webex_message.get("target", {})
-        if isinstance(target, dict) and target.get("id"):
-            return str(target["id"])
-
-        space = webex_message.get("space", {})
-        if isinstance(space, dict) and space.get("id"):
-            return str(space["id"])
-
-    return ""
-
-
-def _coerce_message_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and "text" in item:
-                parts.append(str(item["text"]))
-            else:
-                parts.append(str(item))
-        return "\n".join(part for part in parts if part)
-
-    return str(content)
-
-
-def _extract_last_ai_markdown(graph_result: dict[str, Any]) -> str:
-    messages = graph_result.get("messages", [])
-    for message in reversed(messages):
-        if _value_from_message(message, "type") == "ai":
-            return _coerce_message_content(_value_from_message(message, "content"))
-    return ""
-
-
-def _send_threaded_webex_reply(
-    markdown: str,
-    thread_id: str,
-    webex_message: Any,
-    webex_api: Any | None = None,
-) -> bool:
-    room_id = _extract_room_id(webex_message)
-    if not room_id:
-        return False
-
-    api = webex_api
-    if api is None:
-        WebexTeamsAPI = _load_webex_api()
-        token = os.environ.get("WEBEX_ACCESS_TOKEN")
-        if not token:
-            raise ValueError("Missing WEBEX_ACCESS_TOKEN; cannot send threaded Webex reply.")
-        api = WebexTeamsAPI(access_token=token)
-
-    api.messages.create(roomId=room_id, markdown=markdown, parentId=thread_id)
-    return True
-
-def write_toml(
-    user_question: str,
-    xml_string: Optional[str] = None,
-    webex_message: Any | None = None,
-    webex_api: Any | None = None,
-) -> Optional[str]:
+def write_toml(user_question: str, xml_string: Optional[str] = None) -> str: 
     """
-    Orchestrates override generation through LangGraph and optionally posts
-    the final markdown response directly into the originating Webex thread.
+    Pipeline orchestrator:
+    1. Extract intent
+    2. Check conflicts
+    3. Generate TOML
+    4. Validate against schema
+    5. Format Webex response
     """
     try:
-        app = get_compiled_graph()
-        state = build_initial_input(user_question, jira_xml=xml_string)
-
-        thread_id = _extract_thread_id(webex_message) if webex_message is not None else "local-cli"
-        logger.info(
-            "Invoking override graph",
-            extra={"thread_id": redact_value(thread_id)},
-        )
-
-        graph_result = app.invoke(
-            state,
-            config={"configurable": {"thread_id": thread_id}},
-        )
-
-        final_response = _extract_last_ai_markdown(graph_result)
-        if not final_response:
-            raise ValueError("Override graph returned no AI response")
-
-        if webex_message is not None:
-            sent = _send_threaded_webex_reply(
-                markdown=final_response,
-                thread_id=thread_id,
-                webex_message=webex_message,
-                webex_api=webex_api,
+        # Step 1: Extract Intent
+        logger.info("Extracting intent from user request...")
+        intent = extract_intent(user_question, xml_string)
+        logger.info("Intent extraction complete:\n%s", _as_json(intent))
+        
+        # Step 2: Detect Conflicts
+        logger.info("Checking for conflicts against current override.toml...")
+        current_toml = load_current_toml()
+        schema = load_schema()
+        
+        conflict_warning = ""
+        no_conflict_message = _load_no_conflict_message()
+        if current_toml:
+            has_conflict, msg, records = detect_conflicts(intent, current_toml)
+            logger.info(
+                "Conflict detection result:\n%s",
+                _as_json(
+                    {
+                        "has_conflict": has_conflict,
+                        "message": msg,
+                        "record_count": len(records),
+                    }
+                ),
             )
-            if not sent:
-                raise ValueError("Unable to resolve roomId for threaded Webex reply.")
-            return None
-
+            if has_conflict or msg != no_conflict_message:
+                # Surface all conflict/warning messages as non-blocking warnings
+                conflict_warning = _render_template("warning_note", warning_message=msg)
+                logger.info("Conflict warning generated:\n%s", _as_json({"conflict_warning": conflict_warning}))
+        
+        # Step 3 & 4: Generate and Validate TOML
+        logger.info("Building and validating TOML stanza...")
+        toml_out = build_toml_string(intent)
+        logger.info("Generated TOML stanza text was created successfully")
+        validate_stanza(toml_out, schema)
+        logger.info("TOML validation complete")
+        
+        # Step 5: Format the final Webex Response
+        final_response = _render_template(
+            "success",
+            conflict_warning=conflict_warning,
+            toml_stanza=toml_out,
+        )
+        logger.info("Rendered final response text successfully")
         return final_response
 
     except Exception as exc:

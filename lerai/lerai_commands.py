@@ -286,7 +286,7 @@ class LeroyOverrideWriterCommand(Command):
         return "✅ Writing... please wait."
 
     def execute(self, message, attachment_actions, activity):
-        x = write_toml(message)
+        x = write_toml(message, webex_message=activity)
         return x
     
 

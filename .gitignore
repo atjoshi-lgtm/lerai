@@ -220,4 +220,4 @@ __marimo__/
 exports.sh
 tmp/
 archive/
-**/*.db
+**/*.db*

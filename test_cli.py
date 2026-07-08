@@ -3,63 +3,88 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 try:
-    # Preferred import path per request.
     from override_agent.graph import get_compiled_graph
 except ModuleNotFoundError:
-    # Fallback for this repository layout.
     from lerai.override_agent.graph import get_compiled_graph
 
+logging.basicConfig(
+    filename="override_agent.log",
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
-def _print_ai_messages(result: dict[str, Any]) -> None:
-    """Print only AI messages from graph outputs for readability in terminal."""
+
+def _print_new_messages(result: dict[str, Any], seen_messages: set[str]) -> None:
+    """Logs AI messages, tool calls, and tool results that haven't been seen yet."""
     messages = result.get("messages", [])
+    
     for msg in messages:
-        msg_type = getattr(msg, "type", None)
-        if msg_type != "ai":
+        # Skip if we already printed this message in a previous turn
+        msg_id = getattr(msg, "id", str(id(msg)))
+        if msg_id in seen_messages:
             continue
+        seen_messages.add(msg_id)
 
-        content = getattr(msg, "content", "")
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for part in content:
-                if isinstance(part, dict) and "text" in part:
-                    text_parts.append(str(part["text"]))
-                else:
-                    text_parts.append(str(part))
-            rendered = "\n".join(p for p in text_parts if p)
-        else:
-            rendered = str(content)
+        msg_type = getattr(msg, "type", None)
 
-        if rendered.strip():
-            print("\nAssistant:\n")
-            print(rendered)
-            print()
+        # 1. Handle AI Messages and Tool Calls
+        if msg_type == "ai":
+            # Log any tool calls the AI decided to make
+            tool_calls = getattr(msg, "tool_calls", [])
+            for tc in tool_calls:
+                logger.info("[Tool Called: %s] Arguments: %s", tc.get("name"), tc.get("args"))
+
+            # Print standard AI conversational text
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                text_parts = [str(part["text"]) for part in content if isinstance(part, dict) and "text" in part]
+                rendered = "\n".join(text_parts)
+            else:
+                rendered = str(content)
+
+            if rendered.strip():
+                logger.info("[Assistant] %s", rendered)
+                print(f"\n🤖 Assistant:\n{rendered}\n")
+
+        # 2. Handle Tool Results (Optional, but great for debugging)
+        elif msg_type == "tool":
+            content = getattr(msg, "content", "")
+            # Truncate long tool outputs so it doesn't flood the log
+            truncated = str(content)[:300] + ("..." if len(str(content)) > 300 else "")
+            logger.debug("[Tool Result (%s)] %s", getattr(msg, "name", "unknown"), truncated)
 
 
 def _print_interrupts(result: dict[str, Any]) -> bool:
-    """Print interrupt payloads when graph returns __interrupt__."""
+    """Log interrupt payloads when graph returns __interrupt__."""
     interrupts = result.get("__interrupt__")
     if not interrupts:
         return False
 
-    print("\nGraph interrupt detected:\n")
+    logger.warning("[Graph Interrupted / Paused]")
     for item in interrupts:
-        print(item)
+        logger.warning(str(item))
+    print("\n⚠️  [Graph Interrupted / Paused] — see override_agent.log for details.")
     print("\nReply with your resolution to continue.\n")
     return True
 
 
 def main() -> int:
     graph = get_compiled_graph()
-    thread_id = "terminal_test_1"
+    
+    # Generate a unique thread ID every time the script is executed
+    thread_id = f"cli_test_{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
     required_env = [
@@ -70,20 +95,22 @@ def main() -> int:
     ]
     missing = [name for name in required_env if not os.environ.get(name)]
     if missing:
+        logger.error("Missing required environment variables: %s", missing)
         print("Missing required environment variables:")
         for name in missing:
             print(f"- {name}")
         return 1
 
-    print("Override Agent CLI")
+    logger.info("Override Agent CLI session started (thread_id=%s)", thread_id)
+    print(f"Override Agent CLI (Session: {thread_id})")
     print("Type 'exit' or 'quit' to stop.")
 
-    is_first_turn = True
     is_interrupted = False
+    seen_messages: set[str] = set()
 
     while True:
         try:
-            user_text = input("\nYou: ").strip()
+            user_text = input("\n👤 You: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
             return 0
@@ -101,13 +128,12 @@ def main() -> int:
             else:
                 result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
 
-            _print_ai_messages(result)
+            _print_new_messages(result, seen_messages)
             is_interrupted = _print_interrupts(result)
 
-            if is_first_turn:
-                is_first_turn = False
         except Exception as exc:
-            print(f"\nError invoking graph: {exc}\n")
+            logger.error("Error invoking graph: %s", exc, exc_info=True)
+            print(f"\n❌ Error invoking graph: {exc}\n")
 
 
 if __name__ == "__main__":

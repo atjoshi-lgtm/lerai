@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any, Optional
 from functools import lru_cache
 
+from langgraph.types import Command
+from lerai.override_agent.graph import get_compiled_graph
+from lerai.override_agent.nodes import build_initial_input
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -32,6 +36,18 @@ from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_
 
 logger = logging.getLogger(__name__)
 
+def _get_api(webex_api: Any | None = None) -> Any | None:
+    """Helper to ensure we have a working Webex API instance."""
+    if webex_api is not None:
+        return webex_api
+    try:
+        WebexTeamsAPI = _load_webex_api()
+        token = os.environ.get("WEBEX_ACCESS_TOKEN")
+        if token:
+            return WebexTeamsAPI(access_token=token)
+    except Exception:
+        pass
+    return None
 
 def _as_json(value: object) -> str:
     """Best-effort pretty serialization for runtime-generated objects."""
@@ -141,43 +157,77 @@ def _value_from_message(source: Any, key: str) -> Any:
     return getattr(source, key, None)
 
 
-def _extract_thread_id(webex_message: Any) -> str:
-    """Use parentId if present, otherwise fallback to the message id."""
-    candidates = [
-        webex_message,
-        _value_from_message(webex_message, "message"),
-        _value_from_message(webex_message, "data"),
-    ]
+def _extract_thread_id(webex_message: Any, webex_api: Any | None = None) -> str:
+    """Use parentId if present, otherwise ask Webex API, otherwise fallback to message id."""
+    candidates = []
+    if isinstance(webex_message, dict):
+        if "data" in webex_message:
+            candidates.append(webex_message["data"])
+        if "message" in webex_message:
+            candidates.append(webex_message["message"])
+    candidates.append(webex_message)
 
+    # 1. Local search for parentId (if the bot library didn't strip it)
     for candidate in candidates:
         parent_id = _value_from_message(candidate, "parentId")
         if parent_id:
             return str(parent_id)
 
+    # 2. Extract the current message ID
+    message_id = None
     for candidate in candidates:
-        message_id = _value_from_message(candidate, "id")
-        if message_id:
-            return str(message_id)
+        msg_id = _value_from_message(candidate, "id")
+        if msg_id:
+            message_id = str(msg_id)
+            break
 
-    return "default-thread"
+    if not message_id:
+        return "default-thread"
 
+    # 3. BULLETPROOF FALLBACK: Ask Webex directly
+    api = _get_api(webex_api)
+    if api:
+        try:
+            real_msg = api.messages.get(message_id)
+            if hasattr(real_msg, "parentId") and real_msg.parentId:
+                return str(real_msg.parentId)
+        except Exception as exc:
+            logger.warning("Could not verify parentId via Webex API", exc_info=exc)
+
+    return message_id
 
 def _extract_room_id(webex_message: Any) -> str:
-    direct_room_id = _value_from_message(webex_message, "roomId")
-    if direct_room_id:
-        return str(direct_room_id)
-
+    """Extract the room ID from the Webex payload safely."""
+    candidates = []
     if isinstance(webex_message, dict):
-        target = webex_message.get("target", {})
-        if isinstance(target, dict) and target.get("id"):
-            return str(target["id"])
+        if "data" in webex_message:
+            candidates.append(webex_message["data"])
+        if "message" in webex_message:
+            candidates.append(webex_message["message"])
+    candidates.append(webex_message)
 
-        space = webex_message.get("space", {})
-        if isinstance(space, dict) and space.get("id"):
-            return str(space["id"])
+    for candidate in candidates:
+        # 1. Standard message object attribute
+        room_id = _value_from_message(candidate, "roomId")
+        if room_id:
+            return str(room_id)
+
+        # 2. Fallback for Webex 'activity' payloads
+        if isinstance(candidate, dict):
+            target = candidate.get("target", {})
+            if isinstance(target, dict) and target.get("id"):
+                return str(target["id"])
+                
+            space = candidate.get("space", {})
+            if isinstance(space, dict) and space.get("id"):
+                return str(space["id"])
+                
+        # 3. Fallback for object-style activity payloads
+        target = getattr(candidate, "target", None)
+        if target and hasattr(target, "id"):
+            return str(target.id)
 
     return ""
-
 
 def _coerce_message_content(content: Any) -> str:
     if isinstance(content, str):
@@ -213,13 +263,9 @@ def _send_threaded_webex_reply(
     if not room_id:
         return False
 
-    api = webex_api
-    if api is None:
-        WebexTeamsAPI = _load_webex_api()
-        token = os.environ.get("WEBEX_ACCESS_TOKEN")
-        if not token:
-            raise ValueError("Missing WEBEX_ACCESS_TOKEN; cannot send threaded Webex reply.")
-        api = WebexTeamsAPI(access_token=token)
+    api = _get_api(webex_api)
+    if not api:
+        raise ValueError("Missing WEBEX_ACCESS_TOKEN; cannot send threaded Webex reply.")
 
     api.messages.create(roomId=room_id, markdown=markdown, parentId=thread_id)
     return True
@@ -236,20 +282,34 @@ def write_toml(
     """
     try:
         app = get_compiled_graph()
-        state = build_initial_input(user_question, jira_xml=xml_string)
+        
+        # Instantiate the API early so we can do the foolproof lookup
+        api = _get_api(webex_api)
+        
+        thread_id = _extract_thread_id(webex_message, webex_api=api) if webex_message is not None else "local-cli"
+        config = {"configurable": {"thread_id": thread_id}}
 
-        thread_id = _extract_thread_id(webex_message) if webex_message is not None else "local-cli"
+        # Check if this thread is currently paused/interrupted
+        current_state = app.get_state(config)
+        is_interrupted = len(current_state.next) > 0
+
         logger.info(
-            "Invoking override graph",
+            f"Invoking override graph (Interrupted: {is_interrupted})",
             extra={"thread_id": redact_value(thread_id)},
         )
 
-        graph_result = app.invoke(
-            state,
-            config={"configurable": {"thread_id": thread_id}},
-        )
+        if is_interrupted:
+            graph_result = app.invoke(Command(resume=user_question), config=config)
+        else:
+            state = build_initial_input(user_question, jira_xml=xml_string)
+            graph_result = app.invoke(state, config=config)
 
-        final_response = _extract_last_ai_markdown(graph_result)
+        interrupts = graph_result.get("__interrupt__")
+        if interrupts:
+            final_response = str(interrupts[0])
+        else:
+            final_response = _extract_last_ai_markdown(graph_result)
+
         if not final_response:
             raise ValueError("Override graph returned no AI response")
 
@@ -258,7 +318,7 @@ def write_toml(
                 markdown=final_response,
                 thread_id=thread_id,
                 webex_message=webex_message,
-                webex_api=webex_api,
+                webex_api=api,
             )
             if not sent:
                 raise ValueError("Unable to resolve roomId for threaded Webex reply.")

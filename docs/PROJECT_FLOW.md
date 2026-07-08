@@ -75,7 +75,7 @@ Important modules under `lerai/`:
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
 | `lerai/leroy_overrides_writer.py` | Orchestrates override intent extraction, conflict checks, TOML generation, schema validation, and Webex formatting. |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. |
-| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and detects literal conflicts plus hierarchy-risk warnings. |
+| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and checks a new intent for conflicts. It loads scope keys, metadata keys, and message templates from `leroy_override_conflict_rules.json`. For each existing `[[override-records]]` stanza it checks three conditions: the geographical scope key and value overlap, the override directive key matches, and the mapname sets intersect (or both are empty, indicating an LR-level rule). If all three conditions hold for any stanza the intent is blocked as a literal conflict and the conflicting ticket IDs are returned. If no literal conflict exists but the incoming scope key is in the configured `warning_scope_keys` set (broad scopes such as `Region-default` or `Region-geo`) a non-blocking warning is returned instead. |
 | `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. |
 | `lerai/scheduled_jobs.py` | Contains daily report jobs; scheduler registration is currently commented out. |
 | `lerai/mysql_client.py` | Opens MySQL connections and returns query results as CSV-like text. |
@@ -569,6 +569,12 @@ Prompt files live under `lerai/prompts/`.
 | `expected_observed_summary_prompt.txt` | `expected_observed_comparison.py` | Expected/observed offload summary instructions. |
 | `leroy_overrides_writer_prompt.txt` | legacy override writer path | Legacy prompt retained in repo but not used by the current deterministic pipeline. |
 | `offline_prod_prompt.txt` | `csv_env_diff.py` | Offline versus production diff summary instructions. |
+| `leroy_override_conflict_rules.json` | `overrides_pipeline/conflict_detector.py` | Defines `scope_keys`, `metadata_keys`, `warning_scope_keys`, and `messages` templates used by the conflict detection algorithm. Loaded once and cached via `lru_cache`. |
+| `leroy_override_entity_extractor_settings.json` | `overrides_pipeline/entity_extractor.py` | Configures extraction parameters such as model name, token limits, and Jira field mappings used by the entity extractor. |
+| `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
+| `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent. |
+| `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
+| `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for hard conflict, broad-scope warning, success, and error states returned to the Webex user. |
 
 ## Libraries Used
 
@@ -598,6 +604,9 @@ Current tests:
 | `tests/test_promote_security.py` | Deterministic promote parsing, signed approval token round trip, tamper rejection, expiry, and missing-secret behavior. |
 | `tests/test_dp_ama_state.py` | DP functions use request-scoped data and no longer expose `dplist_save`. |
 | `tests/test_config.py` | Shared configuration helper behavior for required, optional, integer, boolean, JSON, and file-based settings. |
+| `tests/test_entity_extractor_normalization.py` | Geographical scope normalization: geo name-to-code mapping, `Region-default` coercion, global-word collapsing, and metro space-to-underscore conversion. |
+| `tests/test_leroy_overrides_writer_query_cases.py` | End-to-end TOML generation matches fixture-defined expected stanzas for a range of query patterns. |
+| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Conflict detection against a fixture `override.toml`: verifies blocking conflicts, non-blocking warnings, and clean paths. |
 | `tests/test_logging_utils.py` | Redaction behavior for sensitive mapping keys, emails, bearer tokens, and inline secret assignments. |
 
 Useful no-server validation commands:
@@ -628,3 +637,34 @@ A recent cleanup pass made the following static changes:
 - Added deterministic TOML construction and schema validation for `/write_override` using `tomlkit` and `jsonschema`.
 
 The code still needs broader architecture cleanup; see `docs/CODE_QUALITY_REVIEW.md`.
+
+
+
+### LeRoy Documentation Reference
+
+The following LeRoy documentation files are present in `docs/leroy_manual`.
+
+**LeRoy Overrides.md**
+
+- **Purpose:** The definitive syntax and behavior guide for the `override.toml` file.    
+- **Contents:** Defines the strict rules for override records, specifically that each record must contain exactly one geographical scope and one override directive. It catalogs all acceptable geographical scopes (e.g., Region-geo, Region-country) and lists all available override directives (e.g., Access-control, Quota-tb) with examples. This is the most critical file for understanding override logic.
+
+**LeRoy Change Safety.md**
+
+- **Purpose:** The operational playbook for safely testing and deploying changes to LeRoy.
+- **Contents:** Outlines the mandatory procedures for pre-deployment validation, including using the offline instance to generate output diffs and passing results through the FCS Validation API. It explains the team roles (Author, Reviewer, Deployer) and details the metrics used to ensure a change has not caused network instability.
+
+**LeRoy Design Doc_ LR Maprule and Quota Management.md**
+
+- **Purpose:** The core architectural blueprint explaining how LeRoy operates under the hood.
+- **Contents:** Details the Maprule Placement Algorithms, including the math behind how LeRoy balances disk and flit constraints while prioritizing "sticky" maps. It also illustrates how LeRoy orchestrates its decisions with downstream systems like BLC and FCS.
+
+**LeRoy dynamic config variables.md**
+
+- **Purpose:** The reference sheet for tweaking LeRoy's overarching behavior and safety thresholds.
+- **Contents:** Provides a comprehensive table of parameters found in `dynamic_config.json`, alongside their default values and operational descriptions. It outlines the exact percentage thresholds that dictate when LeRoy will fire an alert versus when it will completely abort a run.
+
+**Region Distributed Cache For Large Regions.md**
+
+- **Purpose:** Explains the foundational networking and caching architecture that necessitates LeRoy.
+- **Contents:** Details how Large Regions optimize storage by splitting the cache into an "Edge Serial Cache" (for popular items) and a "Long Tail Cache" (distributed across the region to prevent duplication). It explains the Ghost Object Placement System (GOPS) and why traditional discovery protocols were abandoned in favor of deterministic object location.

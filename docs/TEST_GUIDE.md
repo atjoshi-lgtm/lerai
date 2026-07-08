@@ -9,7 +9,7 @@ The tests are intentionally designed to run without a Webex bot server, MySQL da
 Run the full no-server suite from the repository root:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture
 ```
 
 Run the compile check:
@@ -36,6 +36,9 @@ The local environment uses `python3`; `python` may not be available on the PATH.
 | `tests/test_dp_ama_state.py` | Verifies DP workflows use request-scoped data instead of global mutable state. |
 | `tests/test_config.py` | Verifies shared environment-variable parsing and validation helpers. |
 | `tests/test_logging_utils.py` | Verifies logging redaction helpers and safe command-entry logging fields. |
+| `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization in the entity extractor. |
+| `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
+| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases. |
 
 ## `tests/test_openai_agent_client.py`
 
@@ -394,6 +397,68 @@ Calls `log_user_request()` under `assertLogs()` and verifies it does not crash.
 
 Why it matters: Python logging reserves field names such as `message`. This test protects against using reserved `LogRecord` field names in `extra` data.
 
+## `tests/test_entity_extractor_normalization.py`
+
+This file tests `_normalize_geographical_scope()` in `lerai/overrides_pipeline/entity_extractor.py`.
+
+These tests do not call the LLM. They validate pure normalization logic applied after tool-call argument parsing.
+
+### `test_region_geo_name_is_mapped_to_code`
+
+Checks that a human-readable geo name such as `"North America"` is mapped to its canonical code `"NA"`.
+
+Why it matters: the LLM may return long-form region names. The normalizer must collapse these to codes before conflict detection.
+
+### `test_region_default_geo_code_is_coerced_to_region_geo`
+
+Checks that a scope key of `Region-default` containing a known geo code (e.g., `"NA"`) is promoted to `Region-geo`.
+
+Why it matters: the LLM may choose an imprecise scope key. This coercion ensures the downstream conflict check uses the correct key.
+
+### `test_region_default_global_words_become_default`
+
+Checks that words like `"global"` under `Region-default` are normalized to `"default"`.
+
+Why it matters: `"default"` is the canonical representation of the global scope in the override schema.
+
+### `test_region_metro_spaces_convert_to_underscores`
+
+Checks that metro names with spaces such as `"New York"` are converted to underscore form `"New_York"`.
+
+Why it matters: the TOML schema uses underscored metro identifiers. Mismatched spacing would fail schema validation.
+
+## `tests/test_leroy_overrides_writer_query_cases.py`
+
+This file tests end-to-end TOML generation in `lerai/leroy_overrides_writer.py` using fixture-driven cases from `tests/fixtures/leroy_overrides_writer_query_cases.json`.
+
+The tests patch `extract_intent` and `load_current_toml` so no LLM call or file system read occurs.
+
+### `test_query_cases_match_expected_toml`
+
+For each fixture case, calls `write_toml()` and checks that:
+
+- The response contains `"Override Stanza Generated Successfully"`.
+- The generated TOML in the code fence, after round-trip parsing with `tomlkit`, matches the canonical form of the fixture's `expected_toml`.
+
+Why it matters: TOML generation is deterministic after extraction. This test locks in the exact stanza shape for each known query pattern, preventing silent regressions.
+
+## `tests/test_leroy_overrides_writer_conflicts_with_fixture.py`
+
+This file tests conflict detection behavior in `lerai/leroy_overrides_writer.py` using a fixture `override.toml` from `tests/fixtures/override.toml` and conflict cases from `tests/fixtures/leroy_overrides_writer_conflict_cases.json`.
+
+The tests patch `extract_intent` and `load_current_toml` to control inputs without touching the file system or LLM.
+
+### `test_conflict_behavior_matches_fixture_expectations`
+
+For each fixture case, calls `write_toml()` and verifies:
+
+- All `contains` strings appear in the response.
+- All `not_contains` strings do not appear in the response.
+- `"Error generating override"` is present when `is_error` is true, absent otherwise.
+- `"Conflict Detected"` is present when `is_conflict` is true, absent otherwise.
+
+Why it matters: conflict detection is a safety gate on production override writes. This test systematically covers expected conflicts and expected clean paths from a shared fixture base.
+
 ## What These Tests Do Not Cover Yet
 
 The suite is useful but intentionally narrow. It does not currently cover:
@@ -404,15 +469,13 @@ The suite is useful but intentionally narrow. It does not currently cover:
 4. Real Query2, LeROY, Footprint, or internal HTTP endpoints.
 5. End-to-end scheduled jobs.
 6. Full promotion approval handler behavior with mocked Webex API and LeROY HTTP responses.
-7. End-to-end tests for the new override pipeline modules (entity extraction, conflict detection, TOML generation, and schema validation).
-8. Request correlation id propagation.
-9. Production logging handler configuration.
+7. Request correlation id propagation.
+8. Production logging handler configuration.
 
 ## Good Next Tests to Add
 
 1. Handler-level tests for `/promote` and `/approve` with mocked Webex and LeROY clients.
 2. Config adoption tests as each service module moves to `lerai/config.py` helpers.
 3. Tests for user-facing error messages that should not expose raw exception detail.
-4. Tests for TOML parsing and schema validation in `lerai/overrides_pipeline/toml_generator.py` and orchestration behavior in `lerai/leroy_overrides_writer.py`.
+4. Tests for retry behavior around idempotent read-only HTTP calls.
 5. Tests for request correlation id creation and propagation once that feature is added.
-6. Tests for retry behavior around idempotent read-only HTTP calls.

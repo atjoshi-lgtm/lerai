@@ -23,6 +23,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Suppress verbose third-party debug output that produces unreadable single-line dumps
+for _noisy_logger in ("httpx", "httpcore", "openai", "openai._base_client"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +86,7 @@ def _print_interrupts(result: dict[str, Any]) -> bool:
 def main() -> int:
     graph = get_compiled_graph()
     
+    logger.info(graph.get_graph(xray=True).draw_mermaid())
     # Generate a unique thread ID every time the script is executed
     thread_id = f"cli_test_{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}

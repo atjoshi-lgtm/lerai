@@ -598,7 +598,7 @@ Prompt files live under `lerai/prompts/`.
 | `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
 | `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent. |
 | `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
-| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for tool order, conflict handling, and context synthesis across user turns. |
+| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for tool order, conflict handling, context synthesis across user turns, and multi-scope request handling. When a user request spans more than one geographical scope (e.g., France via `Region-country` and North America via `Region-geo`), the prompt instructs the supervisor to call `extract_override_intent` once per scope and collect the resulting stanzas before replying. |
 | `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for hard conflict, broad-scope warning, success, and error states returned to the Webex user. |
 
 ## Libraries Used
@@ -671,6 +671,8 @@ The most recent two commits further changed the override architecture:
 - Updated `/write_override` to support interruption/resume across user turns in the same thread.
 - Improved Webex thread/room extraction with parent-id fallback and API verification paths.
 - Added `test_cli.py` as a local interactive harness for manual multi-turn testing of interrupts and resume behavior.
+- Fixed `override_agent_supervisor_system_prompt.txt`: corrected a stale tool name reference (`draft_override_stanza` → `extract_override_intent`) and added a MULTI-SCOPE INSTRUCTION directing the supervisor to call `extract_override_intent` separately for each geographical scope when a request spans more than one.
+- Suppressed verbose third-party debug output (`httpx`, `httpcore`, `openai._base_client`) in `test_cli.py` to make `override_agent.log` human-readable.
 
 Additional historical architecture notes are in `archive/`.
 

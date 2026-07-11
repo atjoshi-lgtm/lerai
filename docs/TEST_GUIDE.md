@@ -40,6 +40,9 @@ What to verify manually:
 - The assistant can ask a follow-up clarification when needed.
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
+- Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
+
+Debug output from the run is written to `override_agent.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log.
 
 ## Test Files at a Glance
 

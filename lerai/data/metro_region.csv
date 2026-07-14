@@ -1,4 +1,4 @@
-﻿"network","ecor_name","region","region_name","hw_category","servers","metro_area"
+"network","ecor_name","region","region_name","hw_category","servers","metro_area"
 "FF","FABRIC-ATL3","47534","FABRIC-ATL32p","1x8_BISON_NVME-K","60","Atlanta"
 "FF","FABRIC-ATL3","47563","FABRIC-ATL32l","1N_X8_SSD-I_64G","116","Atlanta"
 "FF","FABRIC-EWR","48590","FABRIC-EWR13y","1U_X7p_NVME-J_96G_100GE","120","New_York"

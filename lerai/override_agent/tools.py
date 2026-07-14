@@ -56,7 +56,7 @@ def detect_override_conflicts(intent_json: str) -> dict[str, Any]:
         
         # Catch extraction errors before running detection
         if "error" in new_intent:
-            return {"has_conflict": False, "message": new_intent["error"]}
+            return {"has_conflict": False, "message": new_intent["error"], "conflicts": []}
             
         current_toml = _load_override_toml_read_only()
 
@@ -64,19 +64,31 @@ def detect_override_conflicts(intent_json: str) -> dict[str, Any]:
             return {
                 "has_conflict": False,
                 "message": "override.toml was not found; conflict detection skipped.",
+                "conflicts": []
             }
 
-        has_conflict, message, conflicting_records = detect_conflicts(new_intent, current_toml)
-        return {
-            "has_conflict": has_conflict,
-            "message": message,
-        }
+        # Call the upgraded semantic conflict detector
+        found_conflicts = detect_conflicts(new_intent, current_toml)
+        
+        if found_conflicts:
+            return {
+                "has_conflict": True,
+                "conflicts": found_conflicts,
+                "message": f"Detected {len(found_conflicts)} potential conflict(s)."
+            }
+        else:
+            return {
+                "has_conflict": False,
+                "message": "No conflicts detected. Safe to proceed.",
+                "conflicts": []
+            }
+
     except Exception as exc:
         return {
             "has_conflict": False,
             "message": f"Conflict detection failed: {exc}",
+            "conflicts": []
         }
-
 
 @tool
 def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:

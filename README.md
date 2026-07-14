@@ -10,7 +10,10 @@ It provides command-driven workflows for:
 - DP and FD question answering,
 - Query2 variance and quota checks,
 - promotion request/approval flow,
-- interactive LeROY override TOML generation through a thread-aware agent.
+- interactive LeROY override TOML generation through a thread-aware agent,
+- semantic override conflict classification with scope-aware warnings.
+
+The override conflict pipeline now uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, and partial map overlap.
 
 ## Documentation
 

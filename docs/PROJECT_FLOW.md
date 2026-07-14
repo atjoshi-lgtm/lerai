@@ -53,6 +53,7 @@ openai_agent/openai_agent_client.py   Shared Azure OpenAI HTTP client.
 lerai/                                Main application package.
 lerai/override_agent/                 Interactive LangGraph supervisor and tool orchestration.
 lerai/overrides_pipeline/             Deterministic extraction/conflict/validation utilities used by the agent.
+lerai/netarch/                        Netarch database helpers and metro-region mapping exporter.
 lerai/prompts/                        Prompt templates used by LLM workflows.
 test_cli.py                           Local interactive CLI harness for the override agent.
 tests/                                No-server unit tests for payload and parser behavior.
@@ -81,8 +82,9 @@ Important modules under `lerai/`:
 | `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, and TOML generation/validation. |
 | `lerai/override_agent/state.py` | Typed graph state (`messages`, `conflict_report`, `draft_toml`). |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. |
-| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and checks a new intent for conflicts. It loads scope keys, metadata keys, and message templates from `leroy_override_conflict_rules.json`. For each existing `[[override-records]]` stanza it checks three conditions: the geographical scope key and value overlap, the override directive key matches, and the mapname sets intersect (or both are empty, indicating an LR-level rule). If all three conditions hold for any stanza the intent is blocked as a literal conflict and the conflicting ticket IDs are returned. If no literal conflict exists but the incoming scope key is in the configured `warning_scope_keys` set (broad scopes such as `Region-default` or `Region-geo`) a non-blocking warning is returned instead. |
+| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and performs semantic conflict detection. It resolves cross-scope relationships (`Region-default` -> `Region-geo` -> `Region-country` -> `Region-metro` -> `Region-number`) using CSV mappings in `lerai/data/`, classifies map overlap (including all-map and partial overlap cases), compares directive compatibility (currently `Access-control`), and returns structured conflict entries such as `DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, and `PARTIAL_OVERLAP`. |
 | `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. |
+| `lerai/netarch/netarch.py` | Provides read/write Netarch connection helpers and `fetch_metro_region_mapping()` to export current region-to-metro mapping data used by override conflict taxonomy lookups. |
 | `lerai/scheduled_jobs.py` | Contains daily report jobs; scheduler registration is currently commented out. |
 | `lerai/mysql_client.py` | Opens MySQL connections and returns query results as CSV-like text. |
 | `lerai/netarch_queries.py` | Stores SQL used by DP workflows. |
@@ -502,8 +504,8 @@ Flow:
 3. Check graph state for this thread. If there is a pending interrupt (`current_state.next` is non-empty), resume with `Command(resume=...)`; otherwise seed a new turn with `build_initial_input(...)`.
 4. Run supervisor + tool loop:
     - `extract_override_intent`: build structured override intent from full synthesized user request,
-    - `detect_override_conflicts`: check intent against live `override.toml`,
-    - `generate_and_validate_toml`: create TOML and validate against `override_schema.json`.
+    - `generate_and_validate_toml`: create TOML and validate against `override_schema.json`,
+    - `detect_override_conflicts`: check the same intent against live `override.toml` and return structured conflict metadata.
 5. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
 6. If a final AI response is produced:
     - in Webex mode, post as a threaded reply (`parentId=thread_id`) and return `None` to command handler,
@@ -512,7 +514,7 @@ Flow:
 Key behaviors in the current implementation:
 
 - Conversation state is persisted by thread id in `lerai_checkpoints.db`, enabling multi-turn refinement instead of one-shot static tool calling.
-- Conflict handling is interactive: the agent can pause and wait for user resolution, then resume from checkpoint on the next message.
+- Conflict handling now returns typed semantic findings to the supervisor; the generated TOML can still be presented with warnings attached, rather than being automatically blocked in all conflict scenarios.
 - The writer now has robust room/thread extraction for varied Webex activity payload shapes.
 - Deterministic safety checks remain in place through `overrides_pipeline/conflict_detector.py` and `overrides_pipeline/toml_generator.py`.
 
@@ -593,13 +595,13 @@ Prompt files live under `lerai/prompts/`.
 | `expected_observed_summary_prompt.txt` | `expected_observed_comparison.py` | Expected/observed offload summary instructions. |
 | `leroy_overrides_writer_prompt.txt` | legacy override writer path | Legacy prompt retained in repo but not used by the current deterministic pipeline. |
 | `offline_prod_prompt.txt` | `csv_env_diff.py` | Offline versus production diff summary instructions. |
-| `leroy_override_conflict_rules.json` | `overrides_pipeline/conflict_detector.py` | Defines `scope_keys`, `metadata_keys`, `warning_scope_keys`, and `messages` templates used by the conflict detection algorithm. Loaded once and cached via `lru_cache`. |
+| `leroy_override_conflict_rules.json` | `overrides_pipeline/conflict_detector.py` | Defines `scope_keys` and `metadata_keys` used to parse existing override records before semantic scope/directive comparison. |
 | `leroy_override_entity_extractor_settings.json` | `overrides_pipeline/entity_extractor.py` | Configures extraction parameters such as model name, token limits, and Jira field mappings used by the entity extractor. |
 | `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
 | `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent. |
 | `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
-| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for tool order, conflict handling, context synthesis across user turns, and multi-scope request handling. When a user request spans more than one geographical scope (e.g., France via `Region-country` and North America via `Region-geo`), the prompt instructs the supervisor to call `extract_override_intent` once per scope and collect the resulting stanzas before replying. |
-| `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for hard conflict, broad-scope warning, success, and error states returned to the Webex user. |
+| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for tool order, conflict handling, context synthesis across user turns, and multi-scope request handling. The current prompt requires `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts`, then asks the assistant to present TOML plus conflict-type-specific warnings (`DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, `PARTIAL_OVERLAP`) when applicable. |
+| `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for override generation outcomes and conflict/warning messaging returned to the Webex user. |
 
 ## Libraries Used
 
@@ -634,7 +636,7 @@ Current tests:
 | `tests/test_config.py` | Shared configuration helper behavior for required, optional, integer, boolean, JSON, and file-based settings. |
 | `tests/test_entity_extractor_normalization.py` | Geographical scope normalization: geo name-to-code mapping, `Region-default` coercion, global-word collapsing, and metro space-to-underscore conversion. |
 | `tests/test_leroy_overrides_writer_query_cases.py` | End-to-end TOML generation matches fixture-defined expected stanzas for a range of query patterns. |
-| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Conflict detection against a fixture `override.toml`: verifies blocking conflicts, non-blocking warnings, and clean paths. |
+| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Conflict detection against a fixture `override.toml`: verifies conflict messaging paths and clean/no-conflict paths. |
 | `tests/test_logging_utils.py` | Redaction behavior for sensitive mapping keys, emails, bearer tokens, and inline secret assignments. |
 
 Useful no-server validation commands:
@@ -673,6 +675,13 @@ The most recent two commits further changed the override architecture:
 - Added `test_cli.py` as a local interactive harness for manual multi-turn testing of interrupts and resume behavior.
 - Fixed `override_agent_supervisor_system_prompt.txt`: corrected a stale tool name reference (`draft_override_stanza` → `extract_override_intent`) and added a MULTI-SCOPE INSTRUCTION directing the supervisor to call `extract_override_intent` separately for each geographical scope when a request spans more than one.
 - Suppressed verbose third-party debug output (`httpx`, `httpcore`, `openai._base_client`) in `test_cli.py` to make `override_agent.log` human-readable.
+
+Additional local branch updates reflected in this document:
+
+- Added `lerai/netarch/netarch.py` as a package-local Netarch helper and mapping exporter used by override conflict detection.
+- Updated `lerai/overrides_pipeline/conflict_detector.py` from literal overlap checks to hierarchical semantic conflict classification backed by `lerai/data/metro_region.csv`, `lerai/data/country_metro.csv`, and `lerai/data/geo_country.csv`.
+- Updated `lerai/override_agent/tools.py` conflict tool output to include structured `conflicts` in all return paths.
+- Updated `lerai/prompts/override_agent_supervisor_system_prompt.txt` to present generated TOML plus conflict-type-specific warnings instead of forcing immediate interrupt-driven conflict resolution.
 
 Additional historical architecture notes are in `archive/`.
 

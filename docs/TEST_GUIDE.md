@@ -41,6 +41,7 @@ What to verify manually:
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
+- Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
 
 Debug output from the run is written to `override_agent.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log.
 
@@ -56,7 +57,7 @@ Debug output from the run is written to `override_agent.log`. Third-party librar
 | `tests/test_logging_utils.py` | Verifies logging redaction helpers and safe command-entry logging fields. |
 | `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization in the entity extractor. |
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
-| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases. |
+| `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
 
 ## `tests/test_openai_agent_client.py`
 

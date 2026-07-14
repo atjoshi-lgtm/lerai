@@ -1,0 +1,5 @@
+{
+  "model": "gpt-5.2",
+  "temperature": 0,
+  "tool_choice_type": "function"
+}

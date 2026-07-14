@@ -11,20 +11,23 @@ import sys
 import csv
 import re
 import tempfile
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from netarch_queries import query_LR_DP
-from mysql_client import run_mysql_query
+try:
+    from .netarch_queries import query_LR_DP
+except ImportError:
+    from netarch_queries import query_LR_DP
 
 from openai_agent.openai_agent_client import responses
-
-global dplist_save
+from lerai.logging_utils import redact_value
 
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+logger = logging.getLogger(__name__)
 
 def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
@@ -117,20 +120,27 @@ def ask_chatgpt_to_verify_candidate_answer(dpinfo: str, userquetion: str = "", c
         return str(resp)
 
 
-def summarize_dps (userquestion: str = ""): 
-    global dplist_save
-    dplist_save = run_mysql_query(query_LR_DP)
-    return ask_chatgpt_to_summarize_dps(dplist_save,userquestion)
+def fetch_dp_info() -> str:
+    try:
+        from .mysql_client import run_mysql_query
+    except ImportError:
+        from mysql_client import run_mysql_query
 
-def create_dp_candiate_answer(userquestion: str = ""):
-    global dplist_save
-    dplist_save = run_mysql_query(query_LR_DP)
-    return ask_chatgpt_to_create_candidate_answer(dplist_save,userquestion)
+    return run_mysql_query(query_LR_DP)
 
-def verify_dp_candiate_answer(userquestion: str, candidate_answer: str):
+
+def summarize_dps(userquestion: str = "", dpinfo: str = ""):
+    dpinfo = dpinfo or fetch_dp_info()
+    return ask_chatgpt_to_summarize_dps(dpinfo, userquestion)
+
+def create_dp_candiate_answer(userquestion: str = "", dpinfo: str = ""):
+    dpinfo = dpinfo or fetch_dp_info()
+    return ask_chatgpt_to_create_candidate_answer(dpinfo, userquestion)
+
+def verify_dp_candiate_answer(userquestion: str, candidate_answer: str, dpinfo: str = ""):
     #return "Skipping verification"
-    global dplist_save
-    return ask_chatgpt_to_verify_candidate_answer(dplist_save,userquestion,candidate_answer)
+    dpinfo = dpinfo or fetch_dp_info()
+    return ask_chatgpt_to_verify_candidate_answer(dpinfo, userquestion, candidate_answer)
 
 
 if __name__ == "__main__":
@@ -139,6 +149,5 @@ if __name__ == "__main__":
     ca = create_dp_candiate_answer(question)
     ver = verify_dp_candiate_answer(question, ca)
 
-    print (ca)
-    print ("----- Verification ----")
-    print (ver)
+    logger.info("Manual DP candidate answer generated", extra={"answer": redact_value(ca)})
+    logger.info("Manual DP verification generated", extra={"verification": redact_value(ver)})

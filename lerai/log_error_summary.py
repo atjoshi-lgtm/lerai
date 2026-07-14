@@ -1,13 +1,15 @@
 import os
-import subprocess
+import logging
 from typing import Optional
 
 import urllib.request
 import urllib.error
-import sys
-import os
 import ssl
 from openai_agent.openai_agent_client import chat_completion
+from lerai.logging_utils import redact_value
+
+
+logger = logging.getLogger(__name__)
 
 BASE = os.environ.get("FOOTPRINT_API_BASE_URL")
 cert_path = os.environ.get("CERT_PATH")
@@ -106,5 +108,5 @@ def get_airflow_error_summary () -> str:
         raise RuntimeError(f"Error: {e}")
 
 if __name__ == "__main__":
-	print (get_airflow_error_summary())
+    logger.info("Manual Airflow error summary generated", extra={"summary": redact_value(get_airflow_error_summary())})
 

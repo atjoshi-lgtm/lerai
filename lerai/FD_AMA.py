@@ -2,8 +2,13 @@ import os
 import sys
 import json
 import requests
+import logging
 
 from openai_agent.openai_agent_client import chat_completion
+from lerai.logging_utils import redact_value
+
+
+logger = logging.getLogger(__name__)
 
 BASE = os.environ.get("FOOTPRINT_API_BASE_URL")
 cert_path = os.environ.get("CERT_PATH")
@@ -110,7 +115,7 @@ def answer_footprint_question_legacy(user_message, model="gpt-5.2"):
     functions = OPENAI_FUNCTIONS
 
     for _ in range(5):  # Allow up to 5 steps
-        print (f"DEBUG: calling LLM with messages = {messages}")
+        logger.debug("Calling LLM", extra={"messages": redact_value(messages)})
         try:
             response = chat_completion(
                 messages=messages,
@@ -119,30 +124,29 @@ def answer_footprint_question_legacy(user_message, model="gpt-5.2"):
                 model=model
             )
         except requests.HTTPError as e:
-            print(e.response.text)
+            logger.exception("Footprint LLM request failed", extra={"response_text": redact_value(e.response.text)})
             raise    
             
         # response is a dict, not an object with attributes
         msg = response["choices"][0]["message"]
-        print("DEBUG: LLM message:", msg)
+        logger.debug("LLM message received", extra={"llm_message": redact_value(msg)})
 
         if msg.get("function_call"):
             fn = msg["function_call"]["name"]
             args_str = msg["function_call"]["arguments"]
-            print("DEBUG: LLM requested function:", fn)
-            print("DEBUG: Args:", args_str)
+            logger.debug("LLM requested function", extra={"function": fn, "arguments": redact_value(args_str)})
             args = json.loads(args_str) if args_str else {}
 
             if fn not in TOOL_MAP:
-                print(f"Unknown function: {fn}")
+                logger.warning("LLM requested unknown function", extra={"function": fn})
                 return f"Unknown function: {fn}"
 
             try:
                 result = TOOL_MAP[fn](**args)
-                print(f"DEBUG: FUNCTION {fn} result: {str(result)[:350]}{'...' if len(str(result))>350 else ''}")
+                logger.debug("Function result returned", extra={"function": fn, "result": redact_value(str(result)[:350])})
             except Exception as e:
                 result = f"Tool error: {e}"
-                print(f"DEBUG: FUNCTION {fn} ERROR: {e}")
+                logger.exception("Function call failed", extra={"function": fn})
 
             # Pass function call and result back to LLM as a function message (per OpenAI format)
             clean_msg = {"role": "assistant", "content": msg.get("content"), "function_call": msg.get("function_call")}
@@ -153,7 +157,7 @@ def answer_footprint_question_legacy(user_message, model="gpt-5.2"):
 
         # If LLM returns an assistant message with 'content', print and return it.
         if msg.get("content"):
-            print("DEBUG: LLM final content:", msg["content"])
+            logger.debug("LLM final content returned", extra={"content": redact_value(msg["content"])})
             return msg["content"]
 
     return "Sorry, couldn't answer after several tool calls."
@@ -166,7 +170,7 @@ def answer_footprint_question(user_message, model="gpt-5.2"):
     ]
 
     for _ in range(5):  # Allow up to 5 steps
-        print(f"DEBUG: calling LLM with messages = {messages}")
+        logger.debug("Calling LLM", extra={"messages": redact_value(messages)})
         try:
             # We pass OPENAI_FUNCTIONS normally. The adapter script above 
             # will intercept this call and convert it to 'tools' silently.
@@ -177,11 +181,11 @@ def answer_footprint_question(user_message, model="gpt-5.2"):
                 model=model
             )
         except requests.HTTPError as e:
-            print(e.response.text)
+            logger.exception("Footprint LLM request failed", extra={"response_text": redact_value(e.response.text)})
             raise    
             
         msg = response["choices"][0]["message"]
-        print("DEBUG: LLM message:", msg)
+        logger.debug("LLM message received", extra={"llm_message": redact_value(msg)})
 
         # Handle the modern tool response format returned by GPT-5.2
         if msg.get("tool_calls"):
@@ -192,7 +196,7 @@ def answer_footprint_question(user_message, model="gpt-5.2"):
                 args_str = tool_call["function"]["arguments"]
                 tool_call_id = tool_call["id"] 
                 
-                print("DEBUG: LLM requested function:", fn)
+                logger.debug("LLM requested function", extra={"function": fn, "arguments": redact_value(args_str)})
                 args = json.loads(args_str) if args_str else {}
 
                 if fn not in TOOL_MAP:
@@ -200,9 +204,10 @@ def answer_footprint_question(user_message, model="gpt-5.2"):
 
                 try:
                     result = TOOL_MAP[fn](**args)
-                    print(f"DEBUG: FUNCTION {fn} result: {str(result)[:150]}...")
+                    logger.debug("Function result returned", extra={"function": fn, "result": redact_value(str(result)[:150])})
                 except Exception as e:
                     result = f"Tool error: {e}"
+                    logger.exception("Function call failed", extra={"function": fn})
 
                 # Provide tool output linked via the required ID
                 messages.append({
@@ -213,7 +218,7 @@ def answer_footprint_question(user_message, model="gpt-5.2"):
             continue
 
         if msg.get("content"):
-            print("DEBUG: LLM final content:", msg["content"])
+            logger.debug("LLM final content returned", extra={"content": redact_value(msg["content"])})
             return msg["content"]
 
     return "Sorry, couldn't answer after several tool calls."
@@ -223,5 +228,5 @@ if __name__ == "__main__":
     # User can ask natural-language questions:
     q = "What quarters are available for AMS? What is the knee for AMS in 2025Q4 with maprule mm1, traffic type LO, and network f?"
     q="What are the quarters for which we have FDs for AMS? what is the most recent quarter for which we have an FD for mm2 map in AMS? what is the knee?" 
-    print(answer_footprint_question(q))
+    logger.info("Manual footprint answer generated", extra={"answer": redact_value(answer_footprint_question(q))})
 

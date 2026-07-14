@@ -1,0 +1,510 @@
+# This file defines override configurations for maprules and regions.
+# Each record specifies the ticket ID, time range, applicable geographical scope, 
+# maprule names, and an override directive. These overrides are 
+# used to customize the behavior of LeRoy based on specific requirements.
+# Note: each override-record can consist of only one only one override directive and one geographical scope
+# The available maprule level override-directives are: access_control, quota_multiplier, force_accept_disk_quota, traffic_multiplier,
+# traffic_gbps, blc_only, sticky_map_bonus_coefficient, accept_poor_quality_fd
+# The available region level override-directives are: lr_available_servers, lr_available_servers_multiplier, lr_disk_capacity_tb
+# lr_disk_capacity_multiplier, lr_effcap_gbps, lr_effcap_multiplier, lr_freeze_sticky_maps
+# The available geographical scopes are: default, geo, country, state, metro, region
+
+## LEROYOPS-1. In order to replicate the state of affairs as of start of July 2025,
+## exclude maps that are not in 100G LRs as of July 2025, and also exclude maps that
+## are in some 100G LRs, but we have suspensions/limitations to make sure they're not in
+## all the 100G LRs.
+
+
+[[override-records]]
+Ticket-id = "LEROYOPS-1 LEROYOPS-39"
+Start-time = 1752105600
+Region-default = ["default"]
+Mapnames = [ "w4", "w5", "w155", "w105", "w106", "w107", "w108"]
+Access-control = "must-exclude"
+
+
+[[override-records]]
+## Exclude mm1 from US, but allow it to be served in MIA
+Ticket-id = "LEROYOPS-1"
+Start-time = 1752105600
+Region-geo = [ "NA" ]
+Mapnames = [ "mm1" ]
+Access-control = "must-exclude"
+
+[[override-records]]
+## Exclude mm1 from US, but allow it to be served in MIA
+Ticket-id = "LEROYOPS-1"
+Start-time = 1752105600
+Region-metro = [ "Miami" ]
+Mapnames = [ "mm1" ]
+Access-control = "allowed"
+
+## LEROYOPS-5
+## We need to onboard all the remaining LR-LA maprules to 100G LRs for 
+## which LR capacity was designed. All these maps are well-tested for 
+## RDC compatibility, and regions 46696, 47563 or 48891 have been serving
+## a nontrivial amount of traffic of these maps for months. 
+## LEROYOPS-5 is the first step in large-scale onboarding: we onboard only 
+## 1 LR's demand for each map, by putting each map in only one LR. 
+
+[[override-records]]
+Ticket-id = "LEROYOPS-5"
+Region-number = ["50565"]
+Mapnames = ["w4"]
+Access-control = "allowed"
+
+## LEROYOPS-6
+## We need to tell LeRoy which maps don't need quotas
+[[override-records]]
+Ticket-id = "LEROYOPS-6"
+Region-default = ["default"] 
+Mapnames = ["tx", "t"]
+BLC-only = true
+
+## In LEROYOPS-9, we would like to add t map to all 
+## large regions
+[[override-records]]
+Ticket-id = "LEROYOPS-6 LEROYOPS-9"
+Region-default = ["default"]
+Mapnames = ["tx", "t"]
+Access-control = "allowed"
+
+## LEROYOPS-13
+## Reconfigure maprule allocation and quotas for region 47563
+## LEROYOPD-34
+## Introduce "w106", "w107", "w108", "w10", "w38" to region 47563 
+## Remove maps "api5", "api6", "api9", "w66", "w105", "g3" from region 47563
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-13"
+Region-number = [47563]
+Mapnames = ["mch-ff-lo", "mch-ff-so"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-13"
+Region-number = [47563]
+Mapnames = ["mch-ff-lo", "mch-ff-so"]
+Quota-pct = [30, 5]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-13 LEROYOPS-22 LEROYOPS-34"
+Region-number = [47563]
+Mapnames = ["d", "tx", "w105", "w106", "w107", "w108", "w10", "w38"]
+Access-control = "allowed"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-13 LEROYOPS-22"
+Region-number = [47563]
+Mapnames = ["api5", "api6", "api9", "g3", "mm1", "mm2", "mm3", "da1", "c", "w141", "gi3", "w25", "w66", "w67", "w68", "w69", "w48", "w80", "w65", "da2", "us", "h", "t"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-13 LEROYOPS-22"
+Region-number = [47563]
+Mapnames = ["d", "tx", "w105", "w106", "w107", "w108", "w10", "w38"]
+BLC-only = true
+
+##
+## LEROYOPS-38 Add 25% object count quota for map mch-ff-so in region 47563 
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-38"
+Region-number = [47563]
+Mapnames = ["mch-ff-so"]
+Object-count-quota-pct = [25]
+
+##
+## LEROYOPS-15
+## Blow off inadvertant quotas coming from default arrangements
+## LEROYOPS-9
+## Blow off inadvertant quotas from all large regions
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-15 LEROYOPS-18 LEROYOPS-9"
+Region-default = ["default"]
+Mapnames = ["cw-d-sgjp", "cw-d-sgjp-web", "cw-d-us", "cw-d-us-web", "cw-s-au", "cw-s-au-live", "cw-s-br", "cw-s-br-live", "cw-s-eu", "cw-s-eu-live", "cw-s-eu-web", "cw-s-gb", "cw-s-gb-live", "cw-s-hk", "cw-s-hk-live", "cw-s-in-live", "cw-s-in-web", "cw-s-jp", "cw-s-jp-live", "cw-s-jp-web", "cw-s-kr", "cw-s-sg", "cw-s-sg-live", "cw-s-sg-web", "cw-s-staging", "cw-s-usc-live", "cw-s-use", "cw-s-use-live", "cw-s-use-web", "cw-s-usw", "cw-s-usw-live", "cw-s-usw-web", "im-sro-cn", "im-sro-e", "im-sro-jp", "im-sro-n", "im-sro-o", "im-sro-s", "im-sro-sa", "nbc-live-use", "nbc-live-usw", "nbc-vod-use", "nbc-vod-usw" ]
+Quota-pct = [ 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 ]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-57"
+Region-default = ["default"]
+Mapnames = ["cw-d-sgjp", "cw-d-sgjp-web", "cw-d-us", "cw-d-us-web", "cw-s-au", "cw-s-au-live", "cw-s-br", "cw-s-br-live", "cw-s-eu", "cw-s-eu-live", "cw-s-eu-web", "cw-s-gb", "cw-s-gb-live", "cw-s-hk", "cw-s-hk-live", "cw-s-in-live", "cw-s-in-web", "cw-s-jp", "cw-s-jp-live", "cw-s-jp-web", "cw-s-kr", "cw-s-sg", "cw-s-sg-live", "cw-s-sg-web", "cw-s-staging", "cw-s-usc-live", "cw-s-use", "cw-s-use-live", "cw-s-use-web", "cw-s-usw", "cw-s-usw-live", "cw-s-usw-web", "im-sro-cn", "im-sro-e", "im-sro-jp", "im-sro-n", "im-sro-o", "im-sro-s", "im-sro-sa", "nbc-live-use", "nbc-live-usw", "nbc-vod-use", "nbc-vod-usw" ]
+Object-count-quota-pct = [ 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 ]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-15 LEROYOPS-18 LEROYOPS-9"
+Region-default = ["default"]
+Mapnames = ["cw-d-sgjp", "cw-d-sgjp-web", "cw-d-us", "cw-d-us-web", "cw-s-au", "cw-s-au-live", "cw-s-br", "cw-s-br-live", "cw-s-eu", "cw-s-eu-live", "cw-s-eu-web", "cw-s-gb", "cw-s-gb-live", "cw-s-hk", "cw-s-hk-live", "cw-s-in-live", "cw-s-in-web", "cw-s-jp", "cw-s-jp-live", "cw-s-jp-web", "cw-s-kr", "cw-s-sg", "cw-s-sg-live", "cw-s-sg-web", "cw-s-staging", "cw-s-usc-live", "cw-s-use", "cw-s-use-live", "cw-s-use-web", "cw-s-usw", "cw-s-usw-live", "cw-s-usw-web", "im-sro-cn", "im-sro-e", "im-sro-jp", "im-sro-n", "im-sro-o", "im-sro-s", "im-sro-sa", "nbc-live-use", "nbc-live-usw", "nbc-vod-use", "nbc-vod-usw" ]
+Force-accept-disk-quota = true
+
+[[override-records]]
+Ticket-id = "LEROYOPS-15 LEROYOPS-18 LEROYOPS-9"
+Region-default = ["default"]
+Mapnames = ["cw-d-sgjp", "cw-d-sgjp-web", "cw-d-us", "cw-d-us-web", "cw-s-au", "cw-s-au-live", "cw-s-br", "cw-s-br-live", "cw-s-eu", "cw-s-eu-live", "cw-s-eu-web", "cw-s-gb", "cw-s-gb-live", "cw-s-hk", "cw-s-hk-live", "cw-s-in-live", "cw-s-in-web", "cw-s-jp", "cw-s-jp-live", "cw-s-jp-web", "cw-s-kr", "cw-s-sg", "cw-s-sg-live", "cw-s-sg-web", "cw-s-staging", "cw-s-usc-live", "cw-s-use", "cw-s-use-live", "cw-s-use-web", "cw-s-usw", "cw-s-usw-live", "cw-s-usw-web", "im-sro-cn", "im-sro-e", "im-sro-jp", "im-sro-n", "im-sro-o", "im-sro-s", "im-sro-sa", "nbc-live-use", "nbc-live-usw", "nbc-vod-use", "nbc-vod-usw" ]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-15 LEROYOPS-18 LEROYOPS-9"
+Region-default = ["default"]
+Mapnames = ["cw-d-sgjp", "cw-d-sgjp-web", "cw-d-us", "cw-d-us-web", "cw-s-au", "cw-s-au-live", "cw-s-br", "cw-s-br-live", "cw-s-eu", "cw-s-eu-live", "cw-s-eu-web", "cw-s-gb", "cw-s-gb-live", "cw-s-hk", "cw-s-hk-live", "cw-s-in-live", "cw-s-in-web", "cw-s-jp", "cw-s-jp-live", "cw-s-jp-web", "cw-s-kr", "cw-s-sg", "cw-s-sg-live", "cw-s-sg-web", "cw-s-staging", "cw-s-usc-live", "cw-s-use", "cw-s-use-live", "cw-s-use-web", "cw-s-usw", "cw-s-usw-live", "cw-s-usw-web", "im-sro-cn", "im-sro-e", "im-sro-jp", "im-sro-n", "im-sro-o", "im-sro-s", "im-sro-sa", "nbc-live-use", "nbc-live-usw", "nbc-vod-use", "nbc-vod-usw" ]
+FCS-only = true
+
+##
+## LEROYOPS-19: Introduce mch-ff-lo into all LRs
+## with a default 5 percent disk quota
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-19"
+Region-default = ["default"]
+Mapnames = ["mch-ff-lo"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-19"
+Region-default = ["default"]
+Mapnames = ["mch-ff-lo"]
+Quota-pct = [5]
+
+
+##
+## LEROYOPS-26: Introduce w5 in regions 51683 and 50917
+## LEROYOPS-46: Introduce w5 to all regions in Milan
+## 
+
+[[override-records]]
+Ticket-id = "LEROYOPS-26 LEROYOPS-46"
+Region-number = [50917]
+Mapnames = ["w5"]
+Access-control = "allowed"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-46"
+Region-metro = ["Milan"]
+Mapnames = ["w5"]
+Access-control = "allowed"
+
+
+## 
+## LEROYOPS-35: Add a must-include directive for mm1 and mm2 in region 52598
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-35"
+Region-number = [52598]
+Mapnames = ["mm1", "mm2"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-35"
+Region-number = [52598]
+Mapnames = ["h", "w141", "w80", "gi3", "w25", "w65", "w66", "w67", "w68", "w69", "da1", "w48", "c", "g3"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-35"
+Region-number = [52598]
+Mapnames = ["mch-ff-lo"]
+Quota-pct = [0.01]
+
+##
+## LEROYOPS-40: Make mm1 BLC-only so that it can take up all the space in the region
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-40"
+Region-number = [52598]
+Mapnames = ["mm1"]
+BLC-only = true
+
+##
+## LEROYOPS-50: SIN FDs are missing and will be computed soon. This is a placeholder to use
+## previous disk quotas for mm2 in the region. 
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [52598]
+Mapnames = ["mm2"]
+Quota-tb = [304.55]
+
+##
+## LEROYOPS-38 Phase 2
+## Add mch-ff-lo to regions 50535, 52001, 50527, 49634
+## LEROYOPS-51 Phase 3
+## Add a must-include directive for mch-ff-so across all large regions
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-38 LEROYOPS-51"
+Region-default = ["default"]
+Mapnames = ["mch-ff-so"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-38 LEROYOPS-51"
+Region-default = ["default"]
+Mapnames = ["mch-ff-so"]
+Quota-pct = [1]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-38 LEROYOPS-51"
+Region-default = ["default"]
+Mapnames = ["mch-ff-so"]
+Object-count-quota-pct = [5]
+
+
+##
+## LEROYOPS-39
+## Fix input validation failures in few large regions
+##
+
+## The disk quotas for mm3 in New York increased from 65TB to 141TB
+## The disk quotas for w48 reduced from 119TB to 49TB
+[[override-records]]
+Ticket-id = "LEROYOPS-39"
+Region-metro = ["New_York"]
+Mapnames = ["w48", "mm3"]
+Force-accept-disk-quota = true
+
+
+##
+## LEROYOPS-42
+## Allow the drop in w48's quota. This is a temporary measure and should be reverted. 
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-42"
+Region-default = ["default"]
+Mapnames = ["w48"]
+Force-accept-disk-quota = true
+
+## 
+## LEROYOPS-45
+## Force accept increase in w80's disk quota in region 47534
+## 
+[[override-records]]
+Ticket-id = "LEROYOPS-45"
+Region-number = [47534]
+Mapnames = ["w80"]
+Force-accept-disk-quota = true
+
+##
+## LEROYOPS-49
+## Add an object count quota of 50% for mm3 in region 53419
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-49"
+Region-number = [53419]
+Mapnames = ["mm3"]
+Object-count-quota-pct = [50]
+
+##
+## LEROYOPS-50
+## Allow Leroy to handle maprule allocation for region 48891
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [48891]
+Mapnames = ["w25", "h", "gi3", "w65", "w80", "us", "mm2", "t", "g3", "w141", "da2", "da1"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [48891]
+Mapnames = ["c", "mm1", "mm3", "d", "tx", "w48", "w66", "w67", "w68", "w69", "mch-ff-lo", "mch-ff-so"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [48891]
+Mapnames = ["c", "mm1", "mm3", "d", "tx", "w48", "w66", "w67", "w68", "w69"]
+BLC-only = true
+
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [48891]
+Mapnames = ["mch-ff-lo", "mch-ff-so"]
+Quota-pct = [30, 5]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-50"
+Region-number = [48891]
+Mapnames = ["mch-ff-so"]
+Object-count-quota-pct = [25]
+
+##
+## LEROYOPS-53
+## Remove mm2 from the following large regions: 50535, 50565, 50688, 50917, 51683, 52001, 52250
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-53"
+Region-number = ["50535", "50565", "50688", "50917", "51683", "52001", "52250"]
+Mapnames = ["mm2"]
+Access-control = "must-exclude"
+
+##
+## LEROYOPS-52
+## Add maprule w4 to region 52599
+##
+
+##
+## LEROYOPS-59
+## Add maprule w4 to all regions in Germany
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-52, LEROYOPS-59"
+Region-country = ["DE"]
+Mapnames = ["w4"]
+Access-control = "must-include"
+
+##
+## LEROYOPS-54
+## Add object count quotas to us, mm1, mm2, and mm3 maps in regions
+## 53419, 50527, 53544, and 52268
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [53419]
+Mapnames = ["us", "mm3"]
+Object-count-quota-pct = [20, 45]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [50527]
+Mapnames = ["mm1", "mm2"]
+Object-count-quota-pct = [22, 48]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [53544]
+Mapnames = ["mm1", "mm2"]
+Object-count-quota-pct = [20, 50]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [52268]
+Mapnames = ["mm1", "mm2"]
+Object-count-quota-pct = [25, 55]
+
+
+##
+## LEROYOPS-54
+## The object count quotas above are not taking effect due to a bug
+## in FCS. We will circumvent the exceeding object-count-limit issue
+## by lowering the quotas for these maps
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [50527, 52268]
+Mapnames = ["mm1", "mm2"]
+Quota-multiplier = [0.85, 0.85]
+
+[[override-records]]
+Ticket-id = "LEROYOPS-54"
+Region-number = [53544]
+Mapnames = ["mm1", "mm2"]
+Quota-multiplier = [0.70, 0.70]
+
+##
+## LEROYOPS-55
+## Remove mm2 from all US metros
+##
+
+[[override-records]]
+Ticket-id = "LEROYOPS-55"
+Region-country = ["US"]
+Mapnames = ["mm2"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-55"
+Region-number = [49158]
+Mapnames = ["mm3"]
+Quota-tb = [74]
+
+##
+## LEROYOPS-58
+## Add d map to regions 52183, 51683, and 53188
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-58"
+Region-default = ["default"]
+Mapnames = ["d"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-58"
+Region-number = [52183, 51683, 53188]
+Mapnames = ["d"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-58"
+Region-number = [52183, 51683, 53188]
+Mapnames = ["d"]
+Force-accept-delta-in-traffic-input = true
+
+[[override-records]]
+Ticket-id = "LEROYOPS-60"
+Region-country = ["US"]
+Mapnames = ["d"]
+Access-control = "allowed"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-60"
+Region-geo = ["APAC"]
+Mapnames = ["d"]
+Access-control = "allowed"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-60"
+Region-number = ["52598"]
+Mapnames = ["d"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-60"
+Region-geo = ["LA"]
+Mapnames = ["d"]
+Access-control = "allowed"
+
+##
+## LEROYOPS-61
+## Remove mm2 from Germany
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-61"
+Region-country = ["DE"]
+Mapnames = ["mm2"]
+Access-control = "must-exclude"
+
+##
+## LEROYOPS-63
+## Add w56 to LRs in Australia only
+##
+[[override-records]]
+Ticket-id = "LEROYOPS-63"
+Region-default = ["default"]
+Mapnames = ["w56"]
+Access-control = "must-exclude"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-63"
+Region-number = ["52183", "52190"]
+Mapnames = ["w56"]
+Access-control = "must-include"
+
+[[override-records]]
+Ticket-id = "LEROYOPS-63"
+Region-number = ["52183", "52190"]
+Mapnames = ["w56"]
+BLC-only = true
+
+
+
+

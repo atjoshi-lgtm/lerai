@@ -1,0 +1,188 @@
+[
+  {
+    "query": "Make sure w5 is excluded from default regions",
+    "intent": {
+      "Mapnames": ["w5"],
+      "Geographical-Scope": {
+        "Region-default": ["default"]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": true,
+      "contains": [
+        "Conflict Detected"
+      ],
+      "not_contains": []
+    }
+  },
+  {
+    "query": "Add a rule to exclude w4, w5, w155, w105, w106, w107, and w108 from default regions.",
+    "intent": {
+      "Mapnames": [
+        "w4",
+        "w5",
+        "w155",
+        "w105",
+        "w106",
+        "w107",
+        "w108"
+      ],
+      "Geographical-Scope": {
+        "Region-default": [
+          "default"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": true,
+      "contains": [
+        "Conflict Detected"
+      ],
+      "not_contains": []
+    } 
+  },
+  {
+    "query": "Make sure w5 is excluded from default regions.",
+    "intent": {
+      "Mapnames": [
+        "w5"
+      ],
+      "Geographical-Scope": {
+        "Region-default": [
+          "default"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": true,
+      "contains": [
+        "Conflict Detected"
+      ],
+      "not_contains": []
+    }
+  },
+  {
+    "query": "Remove mm2 from the US.",
+    "intent": {
+      "Mapnames": [
+        "mm2"
+      ],
+      "Geographical-Scope": {
+        "Region-country": [
+          "US"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": true,
+      "contains": [
+        "Conflict Detected"
+      ],
+      "not_contains": []
+    }
+    },
+    {
+    "query": "Remove mm2 from the US.",
+    "intent": {
+      "Mapnames": [
+        "mm2"
+      ],
+      "Geographical-Scope": {
+        "Region-country": [
+          "US"
+        ]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": true,
+      "contains": [
+        "Conflict Detected"
+      ],
+      "not_contains": []
+    }
+  },
+  {
+    "query": "Set the quota percentage of mch-ff-lo to 95% in region 50565.",
+    "intent": {
+      "Mapnames": [
+        "mch-ff-lo"
+      ],
+      "Geographical-Scope": {
+        "Region-number": [
+          50565
+        ]
+      },
+      "Override-Directive": {
+        "Quota-pct": [
+          95
+        ]
+      }
+    },
+    "expected": {
+      "is_conflict": false,
+      "is_error": true,
+      "contains": [
+        "Error generating override"
+      ],
+      "not_contains": []
+    }
+  },
+  {
+    "query": "Allow map brand_new_map in region 59999",
+    "intent": {
+      "Mapnames": ["brand_new_map"],
+      "Geographical-Scope": {
+        "Region-number": [59999]
+      },
+      "Override-Directive": {
+        "Access-control": "allowed"
+      }
+    },
+    "expected": {
+      "is_conflict": false,
+      "contains": [
+        "Override Stanza Generated Successfully"
+      ],
+      "not_contains": [
+        "Conflict Detected"
+      ]
+    }
+  },
+  {
+    "query": "Exclude brand_new_map from Germany",
+    "intent": {
+      "Mapnames": ["brand_new_map"],
+      "Geographical-Scope": {
+        "Region-country": ["DE"]
+      },
+      "Override-Directive": {
+        "Access-control": "must-exclude"
+      }
+    },
+    "expected": {
+      "is_conflict": false,
+      "contains": [
+        "Override Stanza Generated Successfully",
+        "broad Region-country rule"
+      ],
+      "not_contains": [
+        "Conflict Detected"
+      ]
+    }
+  }
+]

@@ -1,39 +1,75 @@
 import os
 import ast
+import json
+import ssl
+import urllib.parse
+import urllib.request
 
 RUN_QUERY2_URL = os.environ.get("RUN_QUERY2_URL")
 
 cert_path = os.environ.get("CERT_PATH")
 key_path = os.environ.get("KEY_PATH")
 
+QUOTA_EXCEED_HEADER = ['physregion', 'fp_config_name', 'objcount_max', 'objectlimit', 'objcount', 'objcount_quota']
 
-import json
-import ast
 
-def handle_response(resp_str: str, silent: bool = True) -> str:
-    data = json.loads(resp_str)
+def _load_query2_rows(resp_str: str, check_name: str):
+    try:
+        data = json.loads(resp_str)
+    except json.JSONDecodeError as e:
+        return None, f"{check_name}: Invalid JSON response: {e}"
+
+    if not isinstance(data, dict):
+        return None, f"{check_name}: Response JSON must be an object"
+
+    stderr = data.get("stderr", "")
+    if stderr is None:
+        stderr = ""
+    if not isinstance(stderr, str):
+        return None, f"{check_name}: stderr must be a string"
+    if stderr.strip():
+        return None, f"{check_name}: {stderr.strip()}"
 
     returncode = data.get("returncode")
-    stdout = data.get("stdout", "")
-    stderr = data.get("stderr", "")
-
-    # If stderr has content → print it and stop
-    if stderr.strip():
-        return("LR quota exceed check:" + stderr.strip())
-        
-
     if returncode != 0:
-        return(f"LR quota exceed check: Non-zero return code: {returncode}")
-        
+        return None, f"{check_name}: Non-zero return code: {returncode}"
 
-    # Parse stdout safely (it's a string representation of a Python list)
+    stdout = data.get("stdout", "")
+    if stdout is None:
+        stdout = ""
+    if not isinstance(stdout, str):
+        return None, f"{check_name}: stdout must be a string"
+
     try:
         rows = ast.literal_eval(stdout.strip())
     except Exception as e:
-        return(f"LR quota exceed check: Failed to parse stdout: {e}")
+        return None, f"{check_name}: Failed to parse stdout: {e}"
+
+    if not isinstance(rows, list):
+        return None, f"{check_name}: stdout must parse to a list"
+    if not rows:
+        return None, f"{check_name}: Empty result set"
+    if not isinstance(rows[0], list):
+        return None, f"{check_name}: Header row must be a list"
+
+    return rows, None
+
+
+def _to_int(value, row, field_name):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid {field_name} value {value!r} in row {row}")
+
+
+def handle_response(resp_str: str, silent: bool = True) -> str:
+    check_name = "LR quota exceed check"
+    rows, error = _load_query2_rows(resp_str, check_name)
+    if error:
+        return error
 
     # Case 1: only header row
-    if len(rows) == 1 and rows[0] == ['region', 'regionname', 'vsize_limit']:
+    if len(rows) == 1 and rows[0] == QUOTA_EXCEED_HEADER:
         if not silent:
             return("LR quota exceed check: No issues.")
         else:
@@ -43,12 +79,17 @@ def handle_response(resp_str: str, silent: bool = True) -> str:
     if len(rows) > 1:
         ret = ["The following fp-configs are exceeding their quota limits or are over machine's objlimit:\n"]
         for row in rows[1:]:  # skip header
+            if not isinstance(row, list) or len(row) < 6:
+                return f"{check_name}: Invalid row format: {row}"
             region = row[0]
             fp_config_name = row[1]
-            objcount_max = row[2]
-            objectlimit = row[3]
-            objcount = row[4]
-            objcount_quota = row[5]
+            try:
+                objcount_max = _to_int(row[2], row, "objcount_max")
+                objectlimit = _to_int(row[3], row, "objectlimit")
+                objcount = _to_int(row[4], row, "objcount")
+                objcount_quota = _to_int(row[5], row, "objcount_quota")
+            except ValueError as e:
+                return f"{check_name}: {e}"
 
             if (objcount_max > objectlimit):
                 if fp_config_name == "all-fps-together":                    
@@ -58,6 +99,8 @@ def handle_response(resp_str: str, silent: bool = True) -> str:
             elif objcount > objcount_quota: 
                 ret.append(f" * LR {region}: {fp_config_name} object count of the whole region is larger than its count quota. {int(objcount):,} > {int(objcount_quota):,}")
         return "\n".join(ret)
+
+    return f"{check_name}: Unexpected result format"
             
             
 def check_query2_for_quota_exceed (silent: bool = True) -> str:

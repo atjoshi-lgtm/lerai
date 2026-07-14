@@ -1,66 +1,101 @@
-import requests
-import os
-import urllib3
+from lerai.config import bool_env, int_env, required_env
 
 
+REQUIRED_AZURE_ENV_VARS = (
+    "AZURE_OPENAI_URL",
+    "AZURE_API_KEY",
+    "AZURE_USER_ID",
+    "AZURE_APP_NAME",
+)
 
-AZURE_OPENAI_URL = os.environ.get("AZURE_OPENAI_URL")
-AZURE_API_KEY = os.environ.get("AZURE_API_KEY")
-AZURE_USER_ID = os.environ.get("AZURE_USER_ID")
-AZURE_APP_NAME = os.environ.get("AZURE_APP_NAME")
+SUPPORTED_PAYLOAD_KWARGS = (
+    "temperature",
+    "top_p",
+    "seed",
+    "response_format",
+    "metadata",
+    "user",
+    "parallel_tool_calls",
+)
 
-if not all([AZURE_OPENAI_URL, AZURE_API_KEY, AZURE_USER_ID, AZURE_APP_NAME]):
-    raise ValueError("Missing one or more required Azure OpenAI environment variables (AZURE_OPENAI_URL, AZURE_API_KEY, AZURE_USER_ID, AZURE_APP_NAME)")
 
-# 1. Keep a backup of the real requests.post function
-_original_requests_post = requests.post
+def _request_timeout(kwargs):
+    timeout = kwargs.get("timeout")
+    if timeout is None:
+        timeout = int_env("AZURE_OPENAI_TIMEOUT", 30, minimum=1)
+    return float(timeout)
 
-# 2. Create an interceptor function
-def gpt5_payload_adapter(url, *args, **kwargs):
-    # Check if the payload contains the legacy functions block
-    if "json" in kwargs and "functions" in kwargs["json"]:
-        payload = kwargs["json"]
-        
-        print("DEBUG [Adapter]: Intercepted legacy payload. Converting to GPT-5.2 tools standard...")
-        
-        # Pull out the legacy list and transform it into a modern tool array
-        legacy_functions = payload.pop("functions")
-        payload["tools"] = [{"type": "function", "function": fn} for fn in legacy_functions]
-        
-        # Swap out function_call for tool_choice
-        payload.pop("function_call", None)
-        payload["tool_choice"] = "auto"
 
-    # Forward the modified payload out to the network via the original requests mechanism
-    return _original_requests_post(url, *args, **kwargs)
+def _ssl_verify():
+    return bool_env("AZURE_OPENAI_VERIFY_SSL", default=True)
 
-# 3. Overwrite requests.post in this module's scope with our adapter
-requests.post = gpt5_payload_adapter
 
-def chat_completion(messages, functions=None, model="GPT-5.2", **kwargs):
-    headers = {
+def _build_headers():
+    return {
         "Content-Type": "application/json",
-        "api-key": AZURE_API_KEY,
-        "user-id": AZURE_USER_ID,
-        "app-name": AZURE_APP_NAME
+        "api-key": required_env("AZURE_API_KEY"),
+        "user-id": required_env("AZURE_USER_ID"),
+        "app-name": required_env("AZURE_APP_NAME"),
     }
+
+
+def _convert_function_call_to_tool_choice(function_call):
+    if isinstance(function_call, dict) and "name" in function_call:
+        return {"type": "function", "function": {"name": function_call["name"]}}
+    return function_call
+
+
+def _build_payload(messages, functions=None, model="GPT-5.2", **kwargs):
     payload = {
         "messages": messages,
-        "max_completion_tokens": 6000
+        "max_completion_tokens": kwargs.get("max_completion_tokens", 6000),
     }
+
+    if model:
+        payload["model"] = model
+
+    for param in SUPPORTED_PAYLOAD_KWARGS:
+        if param in kwargs:
+            payload[param] = kwargs[param]
+
     if functions:
-        payload["functions"] = functions
-        payload["function_call"] = kwargs.get("function_call", "auto")
+        payload["tools"] = [{"type": "function", "function": fn} for fn in functions]
+        tool_choice = kwargs.get("tool_choice", kwargs.get("function_call", "auto"))
+        payload["tool_choice"] = _convert_function_call_to_tool_choice(tool_choice)
 
-    #print ("here's the request")
-    #print (headers)
-    #print (payload)
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    response = requests.post(AZURE_OPENAI_URL, headers=headers, json=payload, verify=False)
-    result = response.json()
-    #print(result)
+    return payload
 
-    response.raise_for_status()
+
+def _load_requests():
+    try:
+        import requests
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing required dependency: requests") from exc
+    return requests
+
+
+def _raise_for_status(response, requests_module):
+    try:
+        response.raise_for_status()
+    except requests_module.HTTPError as exc:
+        status_code = getattr(response, "status_code", "unknown")
+        detail = getattr(response, "text", "") or str(exc)
+        raise requests_module.HTTPError(
+            f"Azure OpenAI API error ({status_code}): {detail[:1000]}",
+            response=response,
+        ) from exc
+
+def chat_completion(messages, functions=None, model="GPT-5.2", **kwargs):
+    requests_module = _load_requests()
+    response = requests_module.post(
+        required_env("AZURE_OPENAI_URL"),
+        headers=_build_headers(),
+        json=_build_payload(messages, functions=functions, model=model, **kwargs),
+        timeout=_request_timeout(kwargs),
+        verify=_ssl_verify(),
+    )
+
+    _raise_for_status(response, requests_module)
     return response.json()
 
 

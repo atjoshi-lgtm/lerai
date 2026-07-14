@@ -1,16 +1,21 @@
 import os
 import re
+import logging
 from webex_bot.models.command import Command
 from csv_env_diff import compare_offline_vs_production
 from log_error_summary import get_airflow_error_summary
 from expected_observed_comparison import run_offload_analysis_workflow
-from DP_AMA import summarize_dps, create_dp_candiate_answer, verify_dp_candiate_answer
+from DP_AMA import summarize_dps, create_dp_candiate_answer, verify_dp_candiate_answer, fetch_dp_info
 from FD_AMA import answer_footprint_question
 from scheduled_jobs import send_daily_csv_diff_report, send_daily_offload_report
 from query2_variance_addition import check_query2_for_variance_addition
 from quota_exceed import check_query2_for_quota_exceed
 from promote import handle_promotion_request, handle_approval_request
 from leroy_overrides_writer import write_toml
+from lerai.logging_utils import log_user_request, redact_value
+
+
+logger = logging.getLogger(__name__)
 
 
 class CompareCsvEnvsCommand(Command):
@@ -26,8 +31,7 @@ class CompareCsvEnvsCommand(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Comparing offline and production CSVs... this may take a few seconds."
 
     def execute(self, message, attachment_actions, activity):
@@ -56,8 +60,7 @@ class AirflowErrorSummaryCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Collecting and summarizing Airflow ERROR logs... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -84,8 +87,7 @@ class ExpectedObservedDiffCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Collecting and summarizing expected and observed offload... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -113,16 +115,16 @@ class LRDPDevCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
         try:
 
             full_text = message
-            candidate_answer = create_dp_candiate_answer(full_text)
-            verification = verify_dp_candiate_answer(full_text, candidate_answer)
+            dpinfo = fetch_dp_info()
+            candidate_answer = create_dp_candiate_answer(full_text, dpinfo=dpinfo)
+            verification = verify_dp_candiate_answer(full_text, candidate_answer, dpinfo=dpinfo)
             a = f"{candidate_answer}\n{verification}"
             verdict_match = re.search(r'<verdict>(.*?)</verdict>',a, re.DOTALL)
             answer_match = re.search(r'<answer>(.*?)</answer>', a, re.DOTALL)    
@@ -148,8 +150,7 @@ class LRDPCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -177,8 +178,7 @@ class footprintCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running query... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -203,8 +203,7 @@ class PromoteCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Running safety evaluation before opening promotion request... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -224,8 +223,7 @@ class ApproveCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Processing your approval... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -242,8 +240,7 @@ class QueryVarianceCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Checking for large regions in need of query2 variance... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -260,8 +257,7 @@ class QuotaExceedCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "✅ Checking for large regions where quota is exceeded... please wait."
 
     def execute(self, message, attachment_actions, activity):
@@ -279,15 +275,18 @@ class LeroyOverrideWriterCommand(Command):
         )
 
     def pre_execute(self, message, attachment_actions, activity):
-        print ("***** details of the message received *****")
-        print (f"message = {message}")
-        print (f"attachment_actions = {attachment_actions}")
-        print (f"activity = {activity}")
-        print ("***** details of the message received *****")
+        logger.info(
+            "Override writer request received",
+            extra={
+                "request_message": redact_value(message),
+                "attachment_actions": redact_value(attachment_actions),
+                "activity": redact_value(activity),
+            },
+        )
         return "✅ Writing... please wait."
 
     def execute(self, message, attachment_actions, activity):
-        x = write_toml(message)
+        x = write_toml(message, webex_message=activity)
         return x
     
 
@@ -305,8 +304,7 @@ class SimulateDailyReport(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Simulating daily report"
 
     def execute(self, message, attachment_actions, activity):
@@ -331,8 +329,7 @@ class SimulateDailyOffloadReport(Command):
 
     def pre_execute(self, message, attachment_actions, activity):
         # This runs immediately so the user gets quick feedback
-        user_email = activity.get('actor', {}).get('emailAddress', 'Unknown')
-        print(f"\n[USER REQUEST] User: {user_email} | Command: {self.command_keyword} | Message: {message or 'None'}")
+        log_user_request(logger, self.command_keyword, message, activity)
         return "🔍 Simulating daily offload report"
 
     def execute(self, message, attachment_actions, activity):

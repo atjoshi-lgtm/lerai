@@ -3,7 +3,6 @@
   "title": "Leroy Override Stanza",
   "description": "Schema for a TOML override stanza used to configure Leroy maprule overrides.",
   "type": "object",
-  "required": ["Ticket-id"],
   "properties": {
     "Ticket-id": {
       "type": "string",
@@ -143,6 +142,10 @@
     "Force-accept-poor-quality-fd": {
       "type": "boolean",
       "description": "If true, LeRoy ignores poor footprint descriptor quality for the specified maps."
+    },
+    "Force-accept-delta-in-traffic-input": {
+      "type": "boolean",
+      "description": "If true, bypasses the check that aborts maprule allocation if a map's traffic jumped by a large amount."
     },
     "LR-freeze-sticky-maps": {
       "type": "boolean",

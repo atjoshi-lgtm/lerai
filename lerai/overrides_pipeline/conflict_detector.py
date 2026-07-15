@@ -165,6 +165,54 @@ def _load_conflict_rules() -> Dict[str, Any]:
 
     return rules
 
+
+@lru_cache(maxsize=1)
+def _load_valid_mapnames() -> set[str]:
+    """Loads valid map shortnames from lerai/data/maps.csv."""
+    maps_csv_path = PROJECT_ROOT / "lerai" / "data" / "maps.csv"
+
+    if not maps_csv_path.exists():
+        logger.warning("maps.csv not found at %s; skipping map validation.", maps_csv_path)
+        return set()
+
+    valid_mapnames: set[str] = set()
+    with maps_csv_path.open(mode="r", encoding="utf-8") as maps_file:
+        reader = csv.DictReader(maps_file)
+        if "shortname" not in (reader.fieldnames or []):
+            logger.warning(
+                "maps.csv is missing 'shortname' column at %s; skipping map validation.",
+                maps_csv_path,
+            )
+            return set()
+
+        for row in reader:
+            shortname = str(row.get("shortname", "")).strip().lower()
+            if shortname:
+                valid_mapnames.add(shortname)
+
+    return valid_mapnames
+
+
+def find_invalid_mapnames(intent: Dict[str, Any]) -> List[str]:
+    """Returns intent map names that are not present in maps.csv shortname list."""
+    mapnames = intent.get("Mapnames", [])
+    if not isinstance(mapnames, list) or not mapnames:
+        return []
+
+    valid_mapnames = _load_valid_mapnames()
+    if not valid_mapnames:
+        return []
+
+    invalid: List[str] = []
+    for raw_name in mapnames:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if name.lower() not in valid_mapnames and name not in invalid:
+            invalid.append(name)
+
+    return invalid
+
 def get_record_scope(record: Dict) -> Tuple[str, List[Any]]:
     """Extracts the geographical scope key and value from a TOML record."""
     rules = _load_conflict_rules()

@@ -122,8 +122,32 @@ def fetch_metro_region_mapping(output_path=None):
 
     return data
 
+def fetch_maps(output_path=None):
+    """
+    Fetches the map rules from the netarch database.
+    Returns a DataFrame with columns: shortname
+    """
+    query = """
+        select 
+            shortname 
+        from 
+            netopt.large_region_maprules
+        """
+    
+    netarch = NetarchConnection()
+    data = pd.read_sql(query, netarch.get_engine())
+    
+    # Save the DataFrame to a CSV file in the data directory.
+    # All entries in CSV should be enclosed in double quotes to avoid issues with commas in the data.
+    if output_path is None:
+        output_path = data_dir / "maps.csv"
+    data.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL)
+
+    return data
+
+
 if __name__ == "__main__":
-    print(fetch_metro_region_mapping())
+    print(fetch_maps())
     # Example usage
 #     query = """
 # select 

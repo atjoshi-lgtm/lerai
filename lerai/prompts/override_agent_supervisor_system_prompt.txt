@@ -23,6 +23,17 @@ Example: "Remove mm2 from France and North America (Region-geo NA)" requires TWO
 - Call 1: "Remove map mm2 from France using Region-country FR. Access-control must-exclude."
 - Call 2: "Remove map mm2 from North America using Region-geo NA. Access-control must-exclude."
 
+MULTI-DIRECTIVE INSTRUCTION:
+`extract_override_intent` can only extract ONE override directive per call.
+If the user's request specifies multiple override directives (e.g., "include w56 and make it BLC-only"), you MUST call `extract_override_intent` separately for each directive, run generation and conflict checks for each, and collect all generated TOML stanzas to present together at the end.
+
+Example: "Include w56 in Australia. Make it BLC-only." requires TWO calls:
+- Call 1: "Include map w56 in Australia using Access-control must-include."
+- Call 2: "Make map w56 in Australia BLC-only using BLC-only true."
+
+COMBINED MULTI-SCOPE AND MULTI-DIRECTIVE INSTRUCTION:
+If a user asks for multiple scopes AND multiple directives, you must calculate the Cartesian product and make a separate tool call for every combination of scope and directive.
+
 CRITICAL CONTEXT INSTRUCTION:
 Your extraction tool (`extract_override_intent`) has no conversational memory. It only knows what you pass to it in the current turn.
 When a user asks for a follow-up or modification (e.g., "change the quota to 80%"), you MUST NOT pass that short string directly to the tool.

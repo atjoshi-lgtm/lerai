@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from lerai.overrides_pipeline.conflict_detector import detect_conflicts
+from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
 from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 
@@ -53,41 +53,77 @@ def detect_override_conflicts(intent_json: str) -> dict[str, Any]:
     """
     try:
         new_intent = json.loads(intent_json)
+        invalid_mapnames = find_invalid_mapnames(new_intent)
+        warnings: list[str] = []
+        if invalid_mapnames:
+            warnings.append(
+                "Invalid map name(s) provided: "
+                + ", ".join(invalid_mapnames)
+                + ". These map names are not present in lerai/data/maps.csv."
+            )
         
         # Catch extraction errors before running detection
         if "error" in new_intent:
-            return {"has_conflict": False, "message": new_intent["error"], "conflicts": []}
+            message = new_intent["error"]
+            if warnings:
+                message = f"{message} Warning: {' '.join(warnings)}"
+            return {
+                "has_conflict": False,
+                "message": message,
+                "conflicts": [],
+                "warnings": warnings,
+                "invalid_mapnames": invalid_mapnames,
+            }
             
         current_toml = _load_override_toml_read_only()
 
         if not current_toml:
+            message = "override.toml was not found; conflict detection skipped."
+            if warnings:
+                message = f"{message} Warning: {' '.join(warnings)}"
             return {
                 "has_conflict": False,
-                "message": "override.toml was not found; conflict detection skipped.",
-                "conflicts": []
+                "message": message,
+                "conflicts": [],
+                "warnings": warnings,
+                "invalid_mapnames": invalid_mapnames,
             }
 
         # Call the upgraded semantic conflict detector
         found_conflicts = detect_conflicts(new_intent, current_toml)
+
+        status_message = (
+            f"Detected {len(found_conflicts)} potential conflict(s)."
+            if found_conflicts
+            else "No conflicts detected. Safe to proceed."
+        )
+        if warnings:
+            status_message = f"{status_message} Warning: {' '.join(warnings)}"
         
         if found_conflicts:
             return {
                 "has_conflict": True,
                 "conflicts": found_conflicts,
-                "message": f"Detected {len(found_conflicts)} potential conflict(s)."
+                "message": status_message,
+                "warnings": warnings,
+                "invalid_mapnames": invalid_mapnames,
             }
         else:
             return {
                 "has_conflict": False,
-                "message": "No conflicts detected. Safe to proceed.",
-                "conflicts": []
+                "message": status_message,
+                "conflicts": [],
+                "warnings": warnings,
+                "invalid_mapnames": invalid_mapnames,
             }
 
     except Exception as exc:
         return {
             "has_conflict": False,
             "message": f"Conflict detection failed: {exc}",
-            "conflicts": []
+            "conflicts": [],
+            "warnings": [],
+            "invalid_mapnames": [],
         }
 
 @tool

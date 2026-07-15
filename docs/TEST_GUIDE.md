@@ -9,7 +9,7 @@ The tests are intentionally designed to run without a Webex bot server, MySQL da
 Run the full no-server suite from the repository root:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation
 ```
 
 Run the compile check:
@@ -40,8 +40,11 @@ What to verify manually:
 - The assistant can ask a follow-up clarification when needed.
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
+- A plain threaded follow-up message (without retyping `/write_override`) continues the same override flow.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
+- Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.
 - Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
+- Conflict checks also surface map-name validation warnings for unknown map shortnames.
 
 Debug output from the run is written to `override_agent.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log.
 
@@ -58,6 +61,40 @@ Debug output from the run is written to `override_agent.log`. Third-party librar
 | `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization in the entity extractor. |
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
 | `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
+| `tests/test_mapname_validation.py` | Verifies map-name validation against `lerai/data/maps.csv` and warning payload fields returned by `detect_override_conflicts`. |
+
+## `tests/test_mapname_validation.py`
+
+This file tests map shortname validation paths in:
+
+- `lerai/overrides_pipeline/conflict_detector.py`
+- `lerai/override_agent/tools.py`
+
+The tests do not call Webex, Azure OpenAI, or live Netarch services.
+
+### `test_find_invalid_mapnames_returns_only_unknown_values`
+
+Checks that known map names are accepted while unknown values are returned in order from `find_invalid_mapnames()`.
+
+Why it matters: invalid map names should be surfaced explicitly so generated overrides are not assumed valid just because schema checks pass.
+
+### `test_detect_override_conflicts_warns_when_mapname_invalid`
+
+Checks that `detect_override_conflicts` includes:
+
+- `invalid_mapnames`
+- non-empty `warnings`
+- warning text in `message`
+
+even when conflict detection itself is skipped.
+
+Why it matters: the supervisor needs warning metadata in a stable shape to present corrective guidance to users.
+
+### `test_detect_override_conflicts_has_no_warning_for_valid_maps`
+
+Checks that valid map names produce empty warning fields.
+
+Why it matters: prevents false-positive warning noise in normal override generation.
 
 ## `tests/test_openai_agent_client.py`
 

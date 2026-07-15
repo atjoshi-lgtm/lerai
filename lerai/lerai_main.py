@@ -73,7 +73,6 @@ class MentionOnlyWebexBot(WebexBot):
 
         normalized = raw_message.strip().lower()
         if normalized == "/help":
-            # Keep help explicit: only trigger the built-in help command on /help.
             raw_message = "help"
             normalized = "help"
 
@@ -93,6 +92,22 @@ class MentionOnlyWebexBot(WebexBot):
                 if normalized == c.command_keyword or normalized == c.card_callback_keyword:
                     command_found = True
                     break
+
+        # --- CLEAN THREAD ROUTING FIX ---
+        # If no explicit command is found, but the message is part of an existing thread,
+        # seamlessly route it to the conversational override agent.
+        if not command_found and not is_card_callback_command:
+            is_thread = False
+            if isinstance(activity, dict) and "parent" in activity:
+                is_thread = True
+            elif hasattr(teams_message, "parentId") and teams_message.parentId:
+                is_thread = True
+
+            if is_thread:
+                # Implicitly prefix the command so the parent router handles it correctly
+                raw_message = f"/write_override {raw_message}"
+                command_found = True
+        # --- END CLEAN FIX ---
 
         if not command_found:
             logger.info("Ignoring message with no matching command")

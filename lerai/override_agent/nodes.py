@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -11,16 +12,117 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_openai import AzureChatOpenAI
 
 from .state import OverrideAgentState
-from .tools import SUPERVISOR_TOOLS
+from .tools import (
+    detect_override_conflicts,
+    extract_override_intent,
+    generate_and_validate_toml,
+    lookup_infrastructure_data,
+    search_leroy_documentation,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = PROJECT_ROOT / "lerai" / "prompts"
 SUPERVISOR_SYSTEM_PROMPT_FILE = PROMPTS_DIR / "override_agent_supervisor_system_prompt.txt"
 
+tools = [
+    extract_override_intent,
+    detect_override_conflicts,
+    generate_and_validate_toml,
+    search_leroy_documentation,
+    lookup_infrastructure_data,
+]
+
+logger = logging.getLogger(__name__)
+
 
 def _load_supervisor_system_prompt() -> str:
      return SUPERVISOR_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8").strip()
+
+
+def _serialize_message(message: Any) -> dict[str, Any]:
+    """Convert LangChain messages into a log-friendly payload."""
+    payload: dict[str, Any] = {
+        "type": getattr(message, "type", message.__class__.__name__),
+        "content": getattr(message, "content", ""),
+    }
+
+    name = getattr(message, "name", None)
+    if name:
+        payload["name"] = name
+
+    tool_call_id = getattr(message, "tool_call_id", None)
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        payload["tool_calls"] = tool_calls
+
+    invalid_tool_calls = getattr(message, "invalid_tool_calls", None)
+    if invalid_tool_calls:
+        payload["invalid_tool_calls"] = invalid_tool_calls
+
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if additional_kwargs:
+        payload["additional_kwargs"] = additional_kwargs
+
+    response_metadata = getattr(message, "response_metadata", None)
+    if response_metadata:
+        payload["response_metadata"] = response_metadata
+
+    usage_metadata = getattr(message, "usage_metadata", None)
+    if usage_metadata:
+        payload["usage_metadata"] = usage_metadata
+
+    return payload
+
+
+def _decode_nested_json(value: Any, max_depth: int = 5) -> Any:
+    """Recursively decode JSON-looking strings into structured objects for logging."""
+    if max_depth <= 0:
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped and stripped[0] in "[{":
+            try:
+                parsed = json.loads(stripped)
+                return _decode_nested_json(parsed, max_depth=max_depth - 1)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    if isinstance(value, list):
+        return [_decode_nested_json(item, max_depth=max_depth) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            key: _decode_nested_json(item, max_depth=max_depth)
+            for key, item in value.items()
+        }
+
+    return value
+
+
+def _pretty_payload(value: Any) -> str:
+    """Return a consistently formatted JSON string for log readability."""
+    normalized = _decode_nested_json(value)
+    return json.dumps(normalized, ensure_ascii=False, indent=2)
+
+
+def _log_llm_request(messages: list[Any]) -> None:
+    logger.info(
+        "[LLM Request Payload] %s",
+        _pretty_payload([_serialize_message(message) for message in messages]),
+    )
+
+
+def _log_llm_response(message: Any) -> None:
+    logger.info(
+        "[LLM Response Payload] %s",
+        _pretty_payload(_serialize_message(message)),
+    )
 
 
 def _get_azure_api_version() -> str:
@@ -164,11 +266,14 @@ def _extract_latest_draft(messages: list[Any]) -> str:
 
 def supervisor_node(state: OverrideAgentState) -> OverrideAgentState:
     """Primary Supervisor node for the override workflow."""
-    llm = _build_supervisor_llm().bind_tools(SUPERVISOR_TOOLS)
+    llm = _build_supervisor_llm().bind_tools(tools)
 
     prior_messages = state.get("messages", [])
     system_prompt = _load_supervisor_system_prompt()
-    response = llm.invoke([SystemMessage(content=system_prompt), *prior_messages])
+    request_messages = [SystemMessage(content=system_prompt), *prior_messages]
+    _log_llm_request(request_messages)
+    response = llm.invoke(request_messages)
+    _log_llm_response(response)
 
     updates: OverrideAgentState = {"messages": [response]}
 

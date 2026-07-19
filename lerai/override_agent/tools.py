@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import csv
 import json
+import pathlib
 from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
 
+from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
 from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = pathlib.Path(PROJECT_ROOT) / "lerai" / "data"
 OVERRIDE_TOML_PATH = PROJECT_ROOT / "override.toml"
 OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
 
@@ -155,8 +159,71 @@ def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:
         }
 
 
+@tool
+def search_leroy_documentation(query: str) -> str:
+    """Use this tool to search the LeRoy manuals when the user asks a conceptual question about override directives, safety rules, architecture, constraints, or configurations.
+    IMPORTANT: Provide short, natural language questions for your query (e.g., 'What is the maximum allowed value for Quota-pct?') rather than a list of keywords."""
+    return search_leroy_knowledge_base(query)
+
+
+@tool
+def lookup_infrastructure_data(search_type: str, value: str) -> str:
+    """Use this tool to look up exact infrastructure mappings. 
+    Valid search_types are: 'map' (to check if a map shortname exists), 'region' (to find metros for a region ID), and 'metro' (to find region IDs for a metro)."""
+    kind = (search_type or "").strip().lower()
+    needle = (value or "").strip()
+
+    if kind not in {"map", "region", "metro"}:
+        return "Invalid search_type. Use one of: map, region, metro."
+
+    if not needle:
+        return "Please provide a non-empty value to search."
+
+    try:
+        if kind == "map":
+            maps_path = DATA_DIR / "maps.csv"
+            with maps_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    shortname = (row.get("shortname") or "").strip().lower()
+                    if shortname == needle.lower():
+                        return f"Map '{needle}' is a valid mapname."
+            return f"Map '{needle}' not found."
+
+        metro_region_path = DATA_DIR / "metro_region.csv"
+        with metro_region_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            if kind == "region":
+                metros: list[str] = []
+                for row in reader:
+                    region = (row.get("region") or "").strip()
+                    metro = (row.get("metro") or row.get("metro_area") or "").strip()
+                    if region == needle and metro and metro not in metros:
+                        metros.append(metro)
+
+                if not metros:
+                    return f"No metros found for region '{needle}'."
+                return f"Region '{needle}' maps to metros: {', '.join(metros)}."
+
+            regions: list[str] = []
+            for row in reader:
+                metro = (row.get("metro") or row.get("metro_area") or "").strip()
+                region = (row.get("region") or "").strip()
+                if metro.lower() == needle.lower() and region and region not in regions:
+                    regions.append(region)
+
+            if not regions:
+                return f"No regions found for metro '{needle}'."
+            return f"Metro '{needle}' maps to regions: {', '.join(regions)}."
+
+    except Exception as exc:
+        return f"Infrastructure lookup is currently unavailable: {exc}"
+
+
 SUPERVISOR_TOOLS = [
     extract_override_intent,
     detect_override_conflicts,
     generate_and_validate_toml,
+    search_leroy_documentation,
+    lookup_infrastructure_data,
 ]

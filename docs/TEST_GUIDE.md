@@ -45,8 +45,11 @@ What to verify manually:
 - Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.
 - Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
 - Conflict checks also surface map-name validation warnings for unknown map shortnames.
+- Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
+- Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
+- The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 
-Debug output from the run is written to `override_agent.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log.
+Debug output from the run is written to a timestamped file under `logs/test_cli/`, for example `logs/test_cli/override_agent_YYYYMMDD_HHMMSS.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log. The supervisor now also logs pretty-printed LLM request and response payloads there for debugging.
 
 ## Test Files at a Glance
 

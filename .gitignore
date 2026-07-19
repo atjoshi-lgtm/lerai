@@ -221,3 +221,5 @@ exports.sh
 tmp/
 archive/
 **/*.db*
+
+lerai/data/chroma_index

@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import datetime
 import uuid
 from typing import Any
 
@@ -17,8 +18,11 @@ try:
 except ModuleNotFoundError:
     from lerai.override_agent.graph import get_compiled_graph
 
+os.makedirs("logs/test_cli", exist_ok=True)
+_log_filename = os.path.join("logs/test_cli", f"override_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
 logging.basicConfig(
-    filename="override_agent.log",
+    filename=_log_filename,
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -86,7 +90,7 @@ def _print_interrupts(result: dict[str, Any]) -> bool:
 def main() -> int:
     graph = get_compiled_graph()
     
-    logger.info(graph.get_graph(xray=True).draw_mermaid())
+    # logger.info(graph.get_graph(xray=True).draw_mermaid())
     # Generate a unique thread ID every time the script is executed
     thread_id = f"cli_test_{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}

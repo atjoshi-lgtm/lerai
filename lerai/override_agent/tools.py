@@ -14,9 +14,11 @@ from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROJECT_ROOT = PROJECT_ROOT
 DATA_DIR = pathlib.Path(PROJECT_ROOT) / "lerai" / "data"
 OVERRIDE_TOML_PATH = PROJECT_ROOT / "override.toml"
 OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
+SCHEMA_PATH = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_entity_extractor_tool.json"
 
 
 def _load_override_toml_read_only() -> str:
@@ -167,57 +169,257 @@ def search_leroy_documentation(query: str) -> str:
 
 
 @tool
-def lookup_infrastructure_data(search_type: str, value: str) -> str:
-    """Use this tool to look up exact infrastructure mappings. 
-    Valid search_types are: 'map' (to check if a map shortname exists), 'region' (to find metros for a region ID), and 'metro' (to find region IDs for a metro)."""
-    kind = (search_type or "").strip().lower()
-    needle = (value or "").strip()
+def lookup_infrastructure_data(target_output: str, source_value: str) -> str:
+    """Use this tool to look up infrastructure mappings. It automatically handles normalization (spaces to underscores), aliases (airport codes), and hierarchical joins.
+    - target_output: What you want to find (must be one of: 'regions', 'metros', 'countries').
+    - source_value: The known entity you are searching with (e.g., 'France', 'FR', 'LAX', 'New York', 'EMEA').
+    The tool will automatically figure out if the source is a geo, country, airport code, or metro, and traverse the hierarchy to return the target."""
+    def normalize(s: str) -> str:
+        return (s or "").strip().lower().replace(" ", "_")
 
-    if kind not in {"map", "region", "metro"}:
-        return "Invalid search_type. Use one of: map, region, metro."
+    def unique(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for value in values:
+            if value and value not in seen:
+                seen.add(value)
+                ordered.append(value)
+        return ordered
 
-    if not needle:
-        return "Please provide a non-empty value to search."
+    def load_csv_rows(file_name: str) -> list[dict[str, str]]:
+        csv_path = DATA_DIR / file_name
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+
+    kind = normalize(target_output)
+    source_norm = normalize(source_value)
+
+    if kind not in {"regions", "metros", "countries"}:
+        return "Invalid target_output. Use one of: regions, metros, countries."
+    if not source_norm:
+        return "Please provide a non-empty source_value to search."
+
+    # Lightweight country aliases for common natural-language inputs.
+    country_aliases = {
+        "france": "fr",
+        "united_states": "us",
+        "united_states_of_america": "us",
+        "usa": "us",
+        "uk": "gb",
+        "united_kingdom": "gb",
+        "great_britain": "gb",
+        "germany": "de",
+        "spain": "es",
+        "italy": "it",
+        "canada": "ca",
+        "australia": "au",
+        "india": "in",
+        "japan": "jp",
+        "china": "cn",
+        "brazil": "br",
+    }
 
     try:
-        if kind == "map":
-            maps_path = DATA_DIR / "maps.csv"
-            with maps_path.open("r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    shortname = (row.get("shortname") or "").strip().lower()
-                    if shortname == needle.lower():
-                        return f"Map '{needle}' is a valid mapname."
-            return f"Map '{needle}' not found."
+        geo_country_rows = load_csv_rows("geo_country.csv")
+        country_metro_rows = load_csv_rows("country_metro.csv")
+        metro_region_rows = load_csv_rows("metro_region.csv")
 
-        metro_region_path = DATA_DIR / "metro_region.csv"
-        with metro_region_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            if kind == "region":
-                metros: list[str] = []
-                for row in reader:
-                    region = (row.get("region") or "").strip()
-                    metro = (row.get("metro") or row.get("metro_area") or "").strip()
-                    if region == needle and metro and metro not in metros:
-                        metros.append(metro)
+        geo_matches = [
+            (row.get("country") or "").strip().upper()
+            for row in geo_country_rows
+            if normalize(row.get("geo") or "") == source_norm
+        ]
+        countries_from_geo = unique(geo_matches)
 
-                if not metros:
-                    return f"No metros found for region '{needle}'."
-                return f"Region '{needle}' maps to metros: {', '.join(metros)}."
+        if countries_from_geo:
+            if kind == "countries":
+                return f"Found countries for {source_value}: {', '.join(countries_from_geo)}"
 
-            regions: list[str] = []
-            for row in reader:
-                metro = (row.get("metro") or row.get("metro_area") or "").strip()
-                region = (row.get("region") or "").strip()
-                if metro.lower() == needle.lower() and region and region not in regions:
-                    regions.append(region)
+            country_norm_set = {normalize(code) for code in countries_from_geo}
+            metros_from_geo = unique(
+                [
+                    normalize((row.get("metro_area") or "").strip())
+                    for row in country_metro_rows
+                    if normalize((row.get("country") or "").strip()) in country_norm_set
+                ]
+            )
 
-            if not regions:
-                return f"No regions found for metro '{needle}'."
-            return f"Metro '{needle}' maps to regions: {', '.join(regions)}."
+            if kind == "metros":
+                if metros_from_geo:
+                    return f"Found metros in {source_value}: {', '.join(metros_from_geo)}"
+                return f"No metros found in {source_value}."
+
+            metro_norm_set = set(metros_from_geo)
+            regions_from_geo = unique(
+                [
+                    (row.get("region") or "").strip()
+                    for row in metro_region_rows
+                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
+                ]
+            )
+            if regions_from_geo:
+                return f"Found regions for {source_value}: {', '.join(regions_from_geo)}"
+            return f"No regions found for {source_value}."
+
+        country_codes_from_data = {
+            normalize((row.get("country") or "").strip()): (row.get("country") or "").strip().upper()
+            for row in country_metro_rows
+            if (row.get("country") or "").strip()
+        }
+        for row in geo_country_rows:
+            country_code = (row.get("country") or "").strip()
+            if country_code:
+                country_codes_from_data[normalize(country_code)] = country_code.upper()
+
+        resolved_country_code = country_codes_from_data.get(source_norm)
+        if not resolved_country_code:
+            alias_code = country_aliases.get(source_norm)
+            if alias_code:
+                resolved_country_code = country_codes_from_data.get(alias_code, alias_code.upper())
+
+        if resolved_country_code:
+            if kind == "countries":
+                return f"Found countries for {source_value}: {resolved_country_code}"
+
+            metros_from_country = unique(
+                [
+                    normalize((row.get("metro_area") or "").strip())
+                    for row in country_metro_rows
+                    if normalize((row.get("country") or "").strip()) == normalize(resolved_country_code)
+                ]
+            )
+
+            if kind == "metros":
+                if metros_from_country:
+                    return f"Found metros in {source_value}: {', '.join(metros_from_country)}"
+                return f"No metros found in {source_value}."
+
+            metro_norm_set = set(metros_from_country)
+            regions_from_country = unique(
+                [
+                    (row.get("region") or "").strip()
+                    for row in metro_region_rows
+                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
+                ]
+            )
+            if regions_from_country:
+                return f"Found regions for {source_value}: {', '.join(regions_from_country)}"
+            return f"No regions found for {source_value}."
+
+        metro_or_airport_matches = [
+            row
+            for row in country_metro_rows
+            if normalize((row.get("metro_area") or "").strip()) == source_norm
+            or normalize((row.get("airport_code") or "").strip()) == source_norm
+        ]
+
+        if metro_or_airport_matches:
+            canonical_metros = unique(
+                [normalize((row.get("metro_area") or "").strip()) for row in metro_or_airport_matches]
+            )
+            countries_from_metro = unique(
+                [
+                    (row.get("country") or "").strip().upper()
+                    for row in metro_or_airport_matches
+                    if (row.get("country") or "").strip()
+                ]
+            )
+
+            if kind == "countries":
+                if countries_from_metro:
+                    return f"Found countries for {source_value}: {', '.join(countries_from_metro)}"
+                return f"No countries found for {source_value}."
+
+            if kind == "metros":
+                return f"Found metros in {source_value}: {', '.join(canonical_metros)}"
+
+            metro_norm_set = set(canonical_metros)
+            regions_from_metro = unique(
+                [
+                    (row.get("region") or "").strip()
+                    for row in metro_region_rows
+                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
+                ]
+            )
+            if regions_from_metro:
+                return f"Found regions for {source_value}: {', '.join(regions_from_metro)}"
+            return f"No regions found for {source_value}."
+
+        return (
+            f"No infrastructure mapping found for {source_value}. "
+            "Try a geo (e.g., EMEA), country code/name (e.g., FR, France), airport code (e.g., LAX), or metro name (e.g., New York)."
+        )
 
     except Exception as exc:
         return f"Infrastructure lookup is currently unavailable: {exc}"
+
+
+@tool
+def get_unique_infrastructure_values(entity_type: str) -> str:
+    """Use this tool to get a comprehensive list of all active entity types in the LeROY network. Valid entity_types are 'geos', 'countries', and 'metros'. Use this to discover what data actually exists before attempting to filter or group them."""
+    kind = (entity_type or "").strip().lower()
+    if kind not in {"geos", "countries", "metros"}:
+        return "Invalid entity_type. Use one of: geos, countries, metros."
+
+    try:
+        if kind in {"geos", "countries"}:
+            file_path = DATA_DIR / "geo_country.csv"
+            with file_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                column = "geo" if kind == "geos" else "country"
+                values = sorted(
+                    {
+                        (row.get(column) or "").strip()
+                        for row in reader
+                        if (row.get(column) or "").strip()
+                    }
+                )
+            return ", ".join(values) if values else f"No {kind} found."
+
+        file_path = DATA_DIR / "country_metro.csv"
+        with file_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            values = sorted(
+                {
+                    (row.get("metro_area") or "").strip()
+                    for row in reader
+                    if (row.get("metro_area") or "").strip()
+                }
+            )
+        return ", ".join(values) if values else "No metros found."
+    except Exception as exc:
+        return f"Failed to load infrastructure values: {exc}"
+
+
+@tool
+def lookup_directive_schema(directive_name: str) -> str:
+    """Use this tool to find the exact structural limitations, allowed enum values, data types, and min/max bounds for a specific override directive (e.g., 'Quota-pct', 'Access-control'). Do NOT guess constraints; use this tool."""
+    name = (directive_name or "").strip()
+    if not name:
+        return "Please provide a non-empty directive_name."
+
+    try:
+        with SCHEMA_PATH.open("r", encoding="utf-8") as f:
+            schema = json.load(f)
+
+        directives = (
+            schema.get("parameters", {})
+            .get("properties", {})
+            .get("Override-Directive", {})
+            .get("properties", {})
+        )
+
+        if not isinstance(directives, dict):
+            return "Directive schema structure is invalid or missing 'Override-Directive.properties'."
+
+        lower_to_actual = {str(key).lower(): key for key in directives.keys()}
+        matched_key = lower_to_actual.get(name.lower())
+        if not matched_key:
+            return f"Directive '{directive_name}' does not exist in the schema."
+
+        return json.dumps(directives[matched_key], indent=2)
+    except Exception as exc:
+        return f"Failed to load directive schema: {exc}"
 
 
 SUPERVISOR_TOOLS = [
@@ -226,4 +428,6 @@ SUPERVISOR_TOOLS = [
     generate_and_validate_toml,
     search_leroy_documentation,
     lookup_infrastructure_data,
+    get_unique_infrastructure_values,
+    lookup_directive_schema,
 ]

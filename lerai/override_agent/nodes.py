@@ -12,26 +12,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_openai import AzureChatOpenAI
 
 from .state import OverrideAgentState
-from .tools import (
-    detect_override_conflicts,
-    extract_override_intent,
-    generate_and_validate_toml,
-    lookup_infrastructure_data,
-    search_leroy_documentation,
-)
+from .tools import SUPERVISOR_TOOLS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = PROJECT_ROOT / "lerai" / "prompts"
 SUPERVISOR_SYSTEM_PROMPT_FILE = PROMPTS_DIR / "override_agent_supervisor_system_prompt.txt"
 
-tools = [
-    extract_override_intent,
-    detect_override_conflicts,
-    generate_and_validate_toml,
-    search_leroy_documentation,
-    lookup_infrastructure_data,
-]
+tools = SUPERVISOR_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -112,14 +100,14 @@ def _pretty_payload(value: Any) -> str:
 
 
 def _log_llm_request(messages: list[Any]) -> None:
-    logger.info(
+    logger.debug(
         "[LLM Request Payload] %s",
         _pretty_payload([_serialize_message(message) for message in messages]),
     )
 
 
 def _log_llm_response(message: Any) -> None:
-    logger.info(
+    logger.debug(
         "[LLM Response Payload] %s",
         _pretty_payload(_serialize_message(message)),
     )

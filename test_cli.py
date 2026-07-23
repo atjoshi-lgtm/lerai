@@ -10,8 +10,14 @@ from datetime import datetime
 import uuid
 from typing import Any
 
-from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+
+from lerai.leroy_overrides_writer import (
+    build_initial_input,
+    commit_override_changes,
+    execute_offline_run,
+    preview_override_diff,
+)
 
 try:
     from override_agent.graph import get_compiled_graph
@@ -131,10 +137,35 @@ def main() -> int:
             continue
 
         try:
-            if is_interrupted:
+            if user_text.startswith("/preview_override"):
+                payload = user_text.replace("/preview_override", "", 1).strip()
+                result_text = preview_override_diff(thread_id, payload)
+                print(result_text)
+                continue
+
+            if user_text.startswith("/commit_override"):
+                jira_id = user_text.replace("/commit_override", "", 1).strip()
+                result_text = commit_override_changes(thread_id, jira_id)
+                print(result_text)
+                continue
+
+            if user_text.startswith("/run_offline"):
+                result_text = execute_offline_run()
+                print(result_text)
+                continue
+
+            if user_text.startswith("/ask_leroy"):
+                payload = user_text.replace("/ask_leroy", "", 1).strip()
+                result = graph.invoke(build_initial_input(payload, force_route="knowledge"), config=config)
+            elif user_text.startswith("/write_override"):
+                payload = user_text.replace("/write_override", "", 1).strip()
+                result = graph.invoke(build_initial_input(payload, force_route="drafting"), config=config)
+            elif user_text.startswith("/discard_override"):
+                result = graph.invoke(build_initial_input("", force_route="discard"), config=config)
+            elif is_interrupted:
                 result = graph.invoke(Command(resume=user_text), config=config)
             else:
-                result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
+                result = graph.invoke(build_initial_input(user_text), config=config)
 
             _print_new_messages(result, seen_messages)
             is_interrupted = _print_interrupts(result)

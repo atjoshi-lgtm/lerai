@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.tools import tool
 
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
+from lerai.git_utils import get_override_toml_path
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
 from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
 from lerai.overrides_pipeline.entity_extractor import extract_intent
@@ -16,16 +17,16 @@ from lerai.overrides_pipeline.entity_extractor import extract_intent
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROJECT_ROOT = PROJECT_ROOT
 DATA_DIR = pathlib.Path(PROJECT_ROOT) / "lerai" / "data"
-OVERRIDE_TOML_PATH = PROJECT_ROOT / "override.toml"
 OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
 SCHEMA_PATH = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_entity_extractor_tool.json"
 
 
 def _load_override_toml_read_only() -> str:
     """Reads override.toml in read-only mode; never writes to disk."""
-    if not OVERRIDE_TOML_PATH.exists():
+    toml_path = get_override_toml_path()
+    if not toml_path.exists():
         return ""
-    return OVERRIDE_TOML_PATH.read_text(encoding="utf-8")
+    return toml_path.read_text(encoding="utf-8")
 
 
 def _load_override_schema() -> dict[str, Any]:
@@ -422,12 +423,35 @@ def lookup_directive_schema(directive_name: str) -> str:
         return f"Failed to load directive schema: {exc}"
 
 
-SUPERVISOR_TOOLS = [
-    extract_override_intent,
-    detect_override_conflicts,
-    generate_and_validate_toml,
+@tool
+def update_draft_intents(updated_intents_json: str) -> dict[str, Any]:
+    """Use this tool to overwrite the current draft plan when a user asks for a modification
+    (e.g., 'change that quota to 90'). Pass the FULL, corrected list of intent JSON objects here.
+    Each object must contain 'action', 'scope_key', 'scope_value', 'directive', and
+    'directive_value'."""
+    required_keys = {"action", "scope_key", "scope_value", "directive", "directive_value"}
+    try:
+        intents = json.loads(updated_intents_json)
+        if not isinstance(intents, list):
+            return {"error": "Input must be a JSON list of intents."}
+        for intent in intents:
+            if not required_keys.issubset(intent.keys()):
+                return {"error": "One or more intents are missing required keys."}
+        return {"ok": True, "draft_intents": intents}
+    except json.JSONDecodeError as exc:
+        return {"error": str(exc)}
+
+
+KNOWLEDGE_TOOLS = [
     search_leroy_documentation,
     lookup_infrastructure_data,
     get_unique_infrastructure_values,
     lookup_directive_schema,
+]
+
+DRAFTING_TOOLS = [
+    extract_override_intent,
+    update_draft_intents,
+    detect_override_conflicts,
+    generate_and_validate_toml,
 ]

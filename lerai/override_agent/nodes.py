@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, TypedDict
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -12,20 +12,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_openai import AzureChatOpenAI
 
 from .state import OverrideAgentState
-from .tools import SUPERVISOR_TOOLS
+from .tools import DRAFTING_TOOLS, KNOWLEDGE_TOOLS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = PROJECT_ROOT / "lerai" / "prompts"
-SUPERVISOR_SYSTEM_PROMPT_FILE = PROMPTS_DIR / "override_agent_supervisor_system_prompt.txt"
-
-tools = SUPERVISOR_TOOLS
 
 logger = logging.getLogger(__name__)
-
-
-def _load_supervisor_system_prompt() -> str:
-     return SUPERVISOR_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8").strip()
 
 
 def _serialize_message(message: Any) -> dict[str, Any]:
@@ -252,47 +245,128 @@ def _extract_latest_draft(messages: list[Any]) -> str:
     return ""
 
 
-def supervisor_node(state: OverrideAgentState) -> OverrideAgentState:
-    """Primary Supervisor node for the override workflow."""
-    llm = _build_supervisor_llm().bind_tools(tools)
+def _extract_latest_intents(messages: list[Any]) -> list[dict] | None:
+    for message in reversed(messages):
+        if getattr(message, "type", None) != "tool":
+            continue
 
-    prior_messages = state.get("messages", [])
-    system_prompt = _load_supervisor_system_prompt()
-    request_messages = [SystemMessage(content=system_prompt), *prior_messages]
+        name = getattr(message, "name", None)
+        content = getattr(message, "content", "")
+        if isinstance(content, list):
+            content = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+
+        if not isinstance(content, str):
+            continue
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+
+        if name == "extract_override_intent":
+            if isinstance(parsed, dict) and "error" not in parsed:
+                return [parsed]
+
+        if name == "update_draft_intents":
+            if isinstance(parsed, dict) and parsed.get("ok") and "draft_intents" in parsed:
+                draft_intents = parsed.get("draft_intents")
+                if isinstance(draft_intents, list):
+                    return draft_intents
+
+    return None
+
+
+class RouteDecision(TypedDict):
+    destination: Annotated[
+        Literal["knowledge", "drafting", "discard"],
+        {"description": "The specialist to route the user to."},
+    ]
+
+
+def semantic_router(state: OverrideAgentState) -> OverrideAgentState:
+    """Classifies the user's intent and sets router_decision."""
+    if state.get("router_decision"):
+        # Command layer already selected a deterministic route.
+        return {}
+
+    llm = _build_supervisor_llm().with_structured_output(RouteDecision)
+    messages = state.get("messages", [])
+    system_prompt = (
+        "You are a router. If the user asks a question about LeRoy rules or infrastructure, "
+        "output 'knowledge'. If they want to build, edit, or check an override, output 'drafting'. "
+        "If they want to cancel, scrap, or clear the plan, output 'discard'."
+    )
+    request_messages = [SystemMessage(content=system_prompt), *messages]
+    _log_llm_request(request_messages)
+    decision: RouteDecision = llm.invoke(request_messages) # type: ignore
+    return {"router_decision": decision["destination"]}
+
+
+def knowledge_specialist(state: OverrideAgentState) -> OverrideAgentState:
+    """Answers questions about LeRoy documentation and infrastructure data."""
+    llm = _build_supervisor_llm().bind_tools(KNOWLEDGE_TOOLS)
+    messages = state.get("messages", [])
+    system_prompt = (
+        "You are an expert on LeRoy override rules, documentation, and infrastructure data. "
+        "Use your tools to look up information and answer the user's question accurately."
+    )
+    request_messages = [SystemMessage(content=system_prompt), *messages]
+    _log_llm_request(request_messages)
+    response = llm.invoke(request_messages)
+    _log_llm_response(response)
+    return {"messages": [response]}
+
+
+def drafting_specialist(state: OverrideAgentState) -> OverrideAgentState:
+    """Builds and validates override intent plans using TOML drafting tools."""
+    llm = _build_supervisor_llm().bind_tools(DRAFTING_TOOLS)
+    messages = state.get("messages", [])
+    # system_prompt = (
+    #     "You are a TOML drafting expert for LeRoy overrides. "
+    #     "Strictly use your tools to extract intents, update the draft plan, and detect conflicts. "
+    #     "Never fabricate values; always run tools to build or modify the intent list."
+    # )
+    system_prompt_path = PROMPTS_DIR / "override_agent_supervisor_system_prompt.txt"
+    system_prompt = system_prompt_path.read_text()
+    request_messages = [SystemMessage(content=system_prompt), *messages]
     _log_llm_request(request_messages)
     response = llm.invoke(request_messages)
     _log_llm_response(response)
 
     updates: OverrideAgentState = {"messages": [response]}
-
-    combined_messages = [*prior_messages, response]
+    combined_messages = [*messages, response]
     latest_conflict = _extract_latest_conflict_report(combined_messages)
     if latest_conflict:
         updates["conflict_report"] = latest_conflict
 
-    latest_draft = _extract_latest_draft(combined_messages)
-    if latest_draft:
-        updates["draft_toml"] = latest_draft
-
+    latest_intents = _extract_latest_intents(state.get("messages", []))
+    if latest_intents is not None:
+        updates["draft_intents"] = latest_intents
     return updates
 
 
-def should_continue(state: OverrideAgentState) -> str:
-    """Route to tools when tool calls are present; otherwise stop and wait for user/app."""
-    messages = state.get("messages", [])
-    if not messages:
-        return "end"
-
-    last_message = messages[-1]
-    if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
-        return "tools"
-
-    return "end"
+def discard_node(state: OverrideAgentState) -> OverrideAgentState:
+    """Clears the draft plan without calling the LLM."""
+    return {
+        "draft_intents": [],
+        "messages": [AIMessage(content="I have cleared the draft plan. How else can I help you?")],
+    }
 
 
-def build_initial_input(user_text: str, jira_xml: str | None = None) -> OverrideAgentState:
+def build_initial_input(
+    user_text: str,
+    jira_xml: str | None = None,
+    force_route: str | None = None,
+) -> OverrideAgentState:
     """Helper to seed graph input for an incoming Webex message."""
     content = user_text.strip()
     if jira_xml:
         content = f"{content}\n\nJIRA_XML_CONTEXT:\n{jira_xml.strip()}"
-    return {"messages": [HumanMessage(content=content)]}
+
+    state: OverrideAgentState = {"messages": [HumanMessage(content=content)]}
+    if force_route:
+        state["router_decision"] = force_route
+    return state

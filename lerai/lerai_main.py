@@ -23,6 +23,9 @@ from lerai_commands import (
     PromoteCommand,
     ApproveCommand,
     LeroyOverrideWriterCommand,
+    AskLeroyCommand,
+    DiscardOverrideCommand,
+    ContextualOverrideThreadCommand,
 )
 
 # Import scheduled jobs
@@ -104,8 +107,8 @@ class MentionOnlyWebexBot(WebexBot):
                 is_thread = True
 
             if is_thread:
-                # Implicitly prefix the command so the parent router handles it correctly
-                raw_message = f"/write_override {raw_message}"
+                # Route to contextual flow so semantic router can decide destination.
+                raw_message = f"/override_thread {raw_message}"
                 command_found = True
         # --- END CLEAN FIX ---
 
@@ -149,6 +152,9 @@ def lerai_main():
     bot.add_command(QueryVarianceCommand())
     bot.add_command(QuotaExceedCommand())
     bot.add_command(LeroyOverrideWriterCommand())
+    bot.add_command(AskLeroyCommand())
+    bot.add_command(DiscardOverrideCommand())
+    bot.add_command(ContextualOverrideThreadCommand())
     #bot.add_command(SimulateDailyReport())
     #bot.add_command(SimulateDailyOffloadReport())
 

@@ -10,5 +10,6 @@ class OverrideAgentState(TypedDict, total=False):
     """State container for the override supervisor workflow."""
 
     messages: Annotated[list[AnyMessage], add_messages]
-    draft_toml: str
+    draft_intents: list[dict[str, Any]]
     conflict_report: dict[str, Any] | str
+    router_decision: str

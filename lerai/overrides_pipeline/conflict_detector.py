@@ -5,6 +5,7 @@ from typing import Dict, Any, Tuple, List, Optional
 from pathlib import Path
 from functools import lru_cache
 import csv
+from lerai.git_utils import get_override_toml_path
 from lerai.netarch.netarch import fetch_metro_region_mapping
 
 logger = logging.getLogger(__name__)
@@ -360,15 +361,12 @@ if __name__ == "__main__":
     # Local Verification Block
     logging.basicConfig(level=logging.INFO)
     
-    # Assuming override.toml is in the root directory (3 levels up from this file)
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-    toml_path = PROJECT_ROOT / "override.toml"
+    toml_path = get_override_toml_path()
     
     if not toml_path.exists():
         print(f"Test failed: Could not find {toml_path}")
     else:
-        with open(toml_path, "r", encoding="utf-8") as f:
-            toml_content = f.read()
+        toml_content = toml_path.read_text(encoding="utf-8")
             
         print("--- Test 1: Simulating an Exact Conflict (LEROYOPS-61) ---")
         # Creating a mock intent that directly collides with LEROYOPS-61 in the provided TOML

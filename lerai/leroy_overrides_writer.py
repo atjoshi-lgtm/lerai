@@ -8,12 +8,17 @@ leroy_overrides_writer.py
 import sys
 import os
 import argparse
+import difflib
 import logging
 import json
+import re
+import subprocess
 from pathlib import Path
 from typing import Any, Optional
 from functools import lru_cache
 import base64
+
+import tomlkit
 
 
 from langgraph.types import Command
@@ -30,13 +35,30 @@ CONFLICT_RULES_FILE = PROMPTS_DIR / "leroy_override_conflict_rules.json"
 LOG_FILE_PATH = PROJECT_ROOT / "leroy_override_pipeline.log"
 
 from lerai.logging_utils import redact_value
+from lerai.git_utils import (
+    ensure_workspace,
+    get_latest_commit_hash,
+    get_override_toml_path,
+    commit_and_push,
+)
 from lerai.override_agent.graph import get_compiled_graph
 from lerai.override_agent.nodes import build_initial_input
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts
+from lerai.overrides_pipeline import toml_merger
 from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
 
 logger = logging.getLogger(__name__)
+
+_TOML_SCOPE_KEYS = (
+    "Region-number",
+    "Region-metro",
+    "Region-country",
+    "Region-geo",
+    "Region-default",
+)
+
+_TOML_METADATA_KEYS = {"Ticket-id", "Start-time", "End-time", "Mapnames"}
 
 def _get_api(webex_api: Any | None = None) -> Any | None:
     """Helper to ensure we have a working Webex API instance."""
@@ -125,6 +147,151 @@ def _render_template(template_key: str, **kwargs: str) -> str:
     template = _load_writer_response_templates()[template_key]
     return template.format(**kwargs)
 
+
+def _thread_config(thread_id: str) -> dict[str, dict[str, str]]:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def _get_thread_draft_intents(app: Any, thread_id: str) -> list[dict[str, Any]]:
+    snapshot = app.get_state(_thread_config(thread_id))
+    values = getattr(snapshot, "values", {}) or {}
+    draft_intents = values.get("draft_intents", [])
+    return draft_intents if isinstance(draft_intents, list) else []
+
+
+def _set_thread_draft_intents(app: Any, thread_id: str, draft_intents: list[dict[str, Any]]) -> None:
+    app.update_state(_thread_config(thread_id), {"draft_intents": draft_intents})
+
+
+def _extract_toml_block(user_text: str | None) -> str | None:
+    if not user_text:
+        return None
+
+    match = re.search(r"```toml\s*(.*?)\s*```", user_text, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _raw_toml_block_to_intent(raw_toml_block: str) -> dict[str, Any]:
+    parsed = tomlkit.parse(raw_toml_block)
+
+    if "override-records" in parsed:
+        records = list(parsed["override-records"])
+        if not records:
+            raise ValueError("Raw TOML block did not contain an override-records stanza.")
+        record = records[0]
+    else:
+        record = parsed
+
+    record_dict = json.loads(json.dumps(record))
+    if not isinstance(record_dict, dict):
+        raise ValueError("Raw TOML block must parse to a TOML table.")
+
+    scope_key = next((key for key in _TOML_SCOPE_KEYS if key in record_dict), None)
+    if not scope_key:
+        raise ValueError("Raw TOML block must include one geographical scope field.")
+
+    directive_keys = [
+        key
+        for key in record_dict.keys()
+        if key not in _TOML_SCOPE_KEYS and key not in _TOML_METADATA_KEYS
+    ]
+    if len(directive_keys) != 1:
+        raise ValueError("Raw TOML block must include exactly one override directive.")
+
+    directive = directive_keys[0]
+    return {
+        "action": "add",
+        "scope_key": scope_key,
+        "scope_value": record_dict[scope_key],
+        "directive": directive,
+        "directive_value": record_dict[directive],
+    }
+
+
+def _merge_draft_intents(live_toml_str: str, draft_intents: list[dict[str, Any]]) -> str:
+    merged_toml = live_toml_str
+    for intent in draft_intents:
+        merged_toml = toml_merger.merge_intent_into_toml(merged_toml, intent)
+    return merged_toml
+
+
+def preview_override_diff(thread_id: str, user_text: str | None = None) -> str:
+    ensure_workspace()
+    app = get_compiled_graph()
+
+    raw_toml_block = _extract_toml_block(user_text)
+    if raw_toml_block:
+        intent = _raw_toml_block_to_intent(raw_toml_block)
+        draft_intents = _get_thread_draft_intents(app, thread_id)
+        draft_intents.append(intent)
+        _set_thread_draft_intents(app, thread_id, draft_intents)
+    elif user_text:
+        write_toml(user_text, thread_id=thread_id, force_route="drafting")
+
+    draft_intents = _get_thread_draft_intents(app, thread_id)
+    if not draft_intents:
+        return "No pending override modifications found in state."
+
+    live_toml_path = get_override_toml_path()
+    live_toml_str = live_toml_path.read_text(encoding="utf-8") if live_toml_path.exists() else ""
+    merged_toml_str = _merge_draft_intents(live_toml_str, draft_intents)
+
+    live_lines = live_toml_str.splitlines(keepends=True)
+    merged_lines = merged_toml_str.splitlines(keepends=True)
+    diff_lines = difflib.unified_diff(
+        live_lines,
+        merged_lines,
+        fromfile="live/override.toml",
+        tofile="preview/override.toml",
+    )
+    diff_text = "".join(diff_lines).rstrip()
+    return f"```diff\n{diff_text}\n```"
+
+
+def commit_override_changes(thread_id: str, jira_id: str) -> str:
+    jira_id = (jira_id or "").strip()
+    if not jira_id:
+        return "Error: A valid Jira Ticket ID is required to commit (e.g., /commit_override LEROYOPS-123)."
+
+    ensure_workspace()
+    app = get_compiled_graph()
+    draft_intents = _get_thread_draft_intents(app, thread_id)
+    if not draft_intents:
+        return "No pending override modifications to commit."
+
+    live_toml_path = get_override_toml_path()
+    live_toml_str = live_toml_path.read_text(encoding="utf-8") if live_toml_path.exists() else ""
+    updated_toml_str = _merge_draft_intents(live_toml_str, draft_intents)
+    live_toml_path.write_text(updated_toml_str, encoding="utf-8")
+
+    commit_and_push(
+        "override.toml",
+        commit_message=f"[{jira_id}] Updated override.toml via LeRAI Webex Bot",
+    )
+
+    _set_thread_draft_intents(app, thread_id, [])
+    latest_hash = get_latest_commit_hash()
+    return f"Committed override.toml for {jira_id}. Commit Hash: {latest_hash}"
+
+
+def execute_offline_run() -> str:
+    result = subprocess.run(["python3", "compute_quota_offline.py"], capture_output=True, text=True)
+    latest_hash = get_latest_commit_hash()
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+
+    return (
+        "### Offline Quota Run\n\n"
+        f"**Commit Hash:** `{latest_hash}`\n\n"
+        f"**Return Code:** `{result.returncode}`\n\n"
+        "#### stdout\n"
+        f"```text\n{stdout}\n```\n\n"
+        "#### stderr\n"
+        f"```text\n{stderr}\n```"
+    )
+
 def load_schema() -> dict:
     """Loads the authoritative JSON schema for validation."""
     schema_path = PROJECT_ROOT / "override_schema.json"
@@ -134,13 +301,11 @@ def load_schema() -> dict:
 
 def load_current_toml() -> str:
     """Loads the current production TOML to check for conflicts."""
-    toml_path = PROJECT_ROOT / "override.toml"
+    toml_path = get_override_toml_path()
     if not toml_path.exists():
         logger.warning("override.toml not found. Proceeding without conflict detection.")
         return ""
-    with open(toml_path, "r", encoding="utf-8") as f:
-        toml_content = f.read()
-    return toml_content
+    return toml_path.read_text(encoding="utf-8")
 
 
 def _load_webex_api():
@@ -291,6 +456,8 @@ def _send_threaded_webex_reply(
 def write_toml(
     user_question: str,
     xml_string: Optional[str] = None,
+    force_route: Optional[str] = None,
+    thread_id: Optional[str] = None,
     webex_message: Any | None = None,
     webex_api: Any | None = None,
 ) -> Optional[str]:
@@ -299,13 +466,21 @@ def write_toml(
     the final markdown response directly into the originating Webex thread.
     """
     try:
+        ensure_workspace()
         app = get_compiled_graph()
         
         # Instantiate the API early so we can do the foolproof lookup
         api = _get_api(webex_api)
         
-        thread_id = _extract_thread_id(webex_message, webex_api=api) if webex_message is not None else "local-cli"
-        config = {"configurable": {"thread_id": thread_id}}
+        resolved_thread_id = (
+            thread_id
+            or (
+                _extract_thread_id(webex_message, webex_api=api)
+                if webex_message is not None
+                else "local-cli"
+            )
+        )
+        config = {"configurable": {"thread_id": resolved_thread_id}}
 
         # Check if this thread is currently paused/interrupted
         current_state = app.get_state(config)
@@ -313,13 +488,17 @@ def write_toml(
 
         logger.info(
             f"Invoking override graph (Interrupted: {is_interrupted})",
-            extra={"thread_id": redact_value(thread_id)},
+            extra={"thread_id": redact_value(resolved_thread_id)},
         )
 
         if is_interrupted:
             graph_result = app.invoke(Command(resume=user_question), config=config)
         else:
-            state = build_initial_input(user_question, jira_xml=xml_string)
+            state = build_initial_input(
+                user_question,
+                jira_xml=xml_string,
+                force_route=force_route,
+            )
             graph_result = app.invoke(state, config=config)
 
         interrupts = graph_result.get("__interrupt__")
@@ -334,7 +513,7 @@ def write_toml(
         if webex_message is not None:
             sent = _send_threaded_webex_reply(
                 markdown=final_response,
-                thread_id=thread_id,
+                thread_id=resolved_thread_id,
                 webex_message=webex_message,
                 webex_api=api,
             )

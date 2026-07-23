@@ -12,6 +12,11 @@ import urllib.error
 import ssl
 import logging
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from openai_agent.openai_agent_client import responses
 from openai_agent.openai_agent_client import chat_completion
 from lerai.logging_utils import redact_value
@@ -143,6 +148,7 @@ if __name__ == "__main__":
     """
     try:
         result = compare_offline_vs_production()
+        print("Diff summary:\n", result)
         logger.info("Diff summary generated", extra={"summary": redact_value(result)})
     except Exception as e:
         logger.exception("CSV diff CLI error")

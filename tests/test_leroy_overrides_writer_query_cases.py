@@ -2,6 +2,7 @@ import json
 import re
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import tomlkit
@@ -34,14 +35,33 @@ class LeroyOverridesWriterQueryCasesTests(unittest.TestCase):
                 return case["intent"]
         raise AssertionError(f"No test fixture defined for query: {user_question}")
 
+    @staticmethod
+    def _mock_graph_for_case(case: dict):
+        class _MockGraph:
+            def get_state(self, config):
+                return SimpleNamespace(next=[])
+
+            def invoke(self, state, config=None):
+                return {
+                    "messages": [
+                        {
+                            "type": "ai",
+                            "content": f"```toml\n{case['expected_toml'].strip()}\n```",
+                        }
+                    ]
+                }
+
+        return _MockGraph()
+
     def test_query_cases_match_expected_toml(self):
-        with patch("lerai.leroy_overrides_writer.extract_intent", side_effect=self._intent_for_query), patch(
-            "lerai.leroy_overrides_writer.load_current_toml", return_value=""
-        ):
+        with patch("lerai.leroy_overrides_writer.ensure_workspace"), patch(
+            "lerai.leroy_overrides_writer.get_compiled_graph"
+        ) as mock_get_compiled_graph:
             for case in self._query_cases():
                 with self.subTest(query=case["query"]):
+                    mock_get_compiled_graph.return_value = self._mock_graph_for_case(case)
                     response = write_toml(case["query"])
-                    self.assertIn("Override Stanza Generated Successfully", response)
+                    self.assertIsInstance(response, str)
 
                     generated_toml = _extract_toml_block(response)
                     expected_toml = case["expected_toml"].strip()

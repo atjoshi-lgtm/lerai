@@ -51,7 +51,8 @@
               "type": "integer"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Override-Directive": {
         "type": "object",
@@ -162,7 +163,8 @@
             "type": "boolean",
             "description": "If true, accepts a large drop in region flitcap and uses LeRoy's new solution."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Start-time": {
         "type": "integer",
@@ -171,11 +173,18 @@
       "End-time": {
         "type": "integer",
         "description": "Unix epoch end time if specified."
+      },
+      "action": {
+        "type": "string",
+        "enum": ["add", "edit", "remove"],
+        "description": "The operation to perform. Use 'add' for new overrides, 'edit' to change an existing override's value, and 'remove' to delete an override."
       }
     },
+    "additionalProperties": false,
     "required": [
       "Geographical-Scope",
-      "Override-Directive"
+      "Override-Directive",
+      "action"
     ]
   }
 }

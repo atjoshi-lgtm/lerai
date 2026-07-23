@@ -216,6 +216,75 @@ def validate_extraction(data: Dict[str, Any]) -> tuple[bool, str]:
         
     return True, "Valid"
 
+
+def _hoist_nested_action(extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Move legacy nested action out of Override-Directive into root payload."""
+    if not isinstance(extracted_data, dict):
+        return extracted_data
+
+    directive = extracted_data.get("Override-Directive")
+    if not isinstance(directive, dict):
+        return extracted_data
+
+    nested_action = directive.get("action")
+    if nested_action is None:
+        return extracted_data
+
+    cleaned = dict(extracted_data)
+    cleaned_directive = dict(directive)
+    cleaned_directive.pop("action", None)
+    cleaned["Override-Directive"] = cleaned_directive
+
+    root_action = cleaned.get("action")
+    if root_action is None or (isinstance(root_action, str) and not root_action.strip()):
+        cleaned["action"] = nested_action
+
+    logger.info(
+        "Detected legacy nested action under Override-Directive; hoisted to root.",
+    )
+    return cleaned
+
+
+def _flatten_extracted_intent(extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    action = extracted_data.get("action", "add")
+    if not isinstance(action, str) or not action.strip():
+        action = "add"
+    else:
+        action = action.strip().lower()
+        if action not in {"add", "edit", "remove"}:
+            action = "add"
+
+    geo_scope = extracted_data.get("Geographical-Scope", {})
+    if not isinstance(geo_scope, dict):
+        raise ValueError("Extracted data is invalid: Geographical-Scope must be an object.")
+
+    normalized_geo_scope = _normalize_geographical_scope(dict(geo_scope))
+    scope_items = [
+        (key, value)
+        for key, value in normalized_geo_scope.items()
+        if isinstance(key, str) and (key.startswith("Region-") or key.startswith("Global"))
+    ]
+    if len(scope_items) != 1:
+        raise ValueError("Extracted data is invalid: must resolve to exactly one geographic scope.")
+    scope_key, scope_value = scope_items[0]
+
+    directive_object = extracted_data.get("Override-Directive", {})
+    if not isinstance(directive_object, dict):
+        raise ValueError("Extracted data is invalid: Override-Directive must be an object.")
+
+    directive_items = list(directive_object.items())
+    if len(directive_items) != 1:
+        raise ValueError("Extracted data is invalid: must resolve to exactly one override directive.")
+    directive, directive_value = directive_items[0]
+
+    return {
+        "action": action,
+        "scope_key": scope_key,
+        "scope_value": scope_value,
+        "directive": directive,
+        "directive_value": directive_value,
+    }
+
 def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str, Any]:
     """Calls the LLM to extract structured intent from the user request and Jira XML."""
     
@@ -269,34 +338,9 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
             raise ValueError("LLM failed to return a structured tool call.")
             
         extracted_data = json.loads(tool_calls[0]["function"]["arguments"])
+        extracted_data = _hoist_nested_action(extracted_data)
         logger.info("Extracted tool-call arguments:\n%s", _as_json(extracted_data))
 
-        # Prefer deterministic ticket extraction from user text/Jira context.
-        user_ticket_id = _extract_ticket_id_from_text(user_text)
-        jira_ticket_id = _extract_ticket_id_from_text(ticket_data.get("Ticket-id", ""))
-        llm_ticket_id = extracted_data.get("Ticket-id", "")
-        if isinstance(llm_ticket_id, str):
-            llm_ticket_id = llm_ticket_id.strip()
-        else:
-            llm_ticket_id = ""
-
-        final_ticket_id = user_ticket_id or jira_ticket_id or llm_ticket_id
-        logger.info(
-            "Resolved ticket id candidates:\n%s",
-            _as_json(
-                {
-                    "user_ticket_id": user_ticket_id,
-                    "jira_ticket_id": jira_ticket_id,
-                    "llm_ticket_id": llm_ticket_id,
-                    "final_ticket_id": final_ticket_id,
-                }
-            ),
-        )
-        if final_ticket_id and re.fullmatch(r"[A-Z]+-\d+", final_ticket_id):
-            extracted_data["Ticket-id"] = final_ticket_id
-        else:
-            extracted_data.pop("Ticket-id", None)
-        
         # --- Deterministic Normalization ---
         geo_scope = extracted_data.get("Geographical-Scope", {})
         extracted_data["Geographical-Scope"] = _normalize_geographical_scope(geo_scope)
@@ -308,8 +352,11 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
         )
         if not is_valid:
             raise ValueError(f"Extracted data is invalid: {validation_msg}\nData: {extracted_data}")
-            
-        return extracted_data
+
+        flat_intent = _flatten_extracted_intent(extracted_data)
+        logger.info("Flattened extraction payload:\n%s", _as_json(flat_intent))
+
+        return flat_intent
         
     except Exception as e:
         logger.error(f"Error during intent extraction: {e}")

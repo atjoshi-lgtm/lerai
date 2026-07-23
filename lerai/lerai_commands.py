@@ -286,7 +286,73 @@ class LeroyOverrideWriterCommand(Command):
         return "✅ Writing... please wait."
 
     def execute(self, message, attachment_actions, activity):
-        x = write_toml(message, webex_message=activity)
+        x = write_toml(message, force_route="drafting", webex_message=activity)
+        return x
+
+
+class AskLeroyCommand(Command):
+    def __init__(self):
+        super().__init__(
+            command_keyword="/ask_leroy",
+            exact_command_keyword_match=False,
+            help_message="Ask LeRoy knowledge base and docs",
+            card=None,
+        )
+
+    def pre_execute(self, message, attachment_actions, activity):
+        logger.info(
+            "Ask LeRoy request received",
+            extra={
+                "request_message": redact_value(message),
+                "attachment_actions": redact_value(attachment_actions),
+                "activity": redact_value(activity),
+            },
+        )
+        return "✅ Thinking... please wait."
+
+    def execute(self, message, attachment_actions, activity):
+        x = write_toml(message, force_route="knowledge", webex_message=activity)
+        return x
+
+
+class DiscardOverrideCommand(Command):
+    def __init__(self):
+        super().__init__(
+            command_keyword="/discard_override",
+            exact_command_keyword_match=False,
+            help_message="Discard the current override draft",
+            card=None,
+        )
+
+    def pre_execute(self, message, attachment_actions, activity):
+        logger.info(
+            "Discard override request received",
+            extra={
+                "request_message": redact_value(message),
+                "attachment_actions": redact_value(attachment_actions),
+                "activity": redact_value(activity),
+            },
+        )
+        return "✅ Discarding draft... please wait."
+
+    def execute(self, message, attachment_actions, activity):
+        x = write_toml(message, force_route="discard", webex_message=activity)
+        return x
+
+
+class ContextualOverrideThreadCommand(Command):
+    """Internal command for threaded replies with no explicit slash command."""
+
+    def __init__(self):
+        super().__init__(
+            command_keyword="/override_thread",
+            exact_command_keyword_match=False,
+            help_message="Continue override conversation in thread",
+            card=None,
+        )
+
+    def execute(self, message, attachment_actions, activity):
+        x = write_toml(message, force_route=None, webex_message=activity)
         return x
     
 

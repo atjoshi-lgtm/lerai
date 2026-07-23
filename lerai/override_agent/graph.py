@@ -9,9 +9,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from .nodes import should_continue, supervisor_node
+from .nodes import discard_node, drafting_specialist, knowledge_specialist, semantic_router
 from .state import OverrideAgentState
-from .tools import SUPERVISOR_TOOLS
+from .tools import DRAFTING_TOOLS, KNOWLEDGE_TOOLS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -25,19 +25,41 @@ _COMPILED_GRAPH = None
 def _build_graph_builder() -> StateGraph:
     graph_builder = StateGraph(OverrideAgentState)
 
-    graph_builder.add_node("supervisor", supervisor_node)
-    graph_builder.add_node("tools", ToolNode(SUPERVISOR_TOOLS))
+    graph_builder.add_node("router", semantic_router)
+    graph_builder.add_node("knowledge", knowledge_specialist)
+    graph_builder.add_node("drafting", drafting_specialist)
+    graph_builder.add_node("discard", discard_node)
+    graph_builder.add_node("knowledge_tools", ToolNode(KNOWLEDGE_TOOLS))
+    graph_builder.add_node("drafting_tools", ToolNode(DRAFTING_TOOLS))
 
-    graph_builder.add_edge(START, "supervisor")
+    graph_builder.add_edge(START, "router")
+
+    def route_decision(state: OverrideAgentState) -> str:
+        return state.get("router_decision", "drafting")
+
     graph_builder.add_conditional_edges(
-        "supervisor",
-        should_continue,
-        {
-            "tools": "tools",
-            "end": END,
-        },
+        "router",
+        route_decision,
+        {"knowledge": "knowledge", "drafting": "drafting", "discard": "discard"},
     )
-    graph_builder.add_edge("tools", "supervisor")
+
+    def tools_condition(state: OverrideAgentState) -> str:
+        messages = state.get("messages", [])
+        if messages and getattr(messages[-1], "tool_calls", None):
+            return "tools"
+        return END
+
+    graph_builder.add_conditional_edges(
+        "knowledge", tools_condition, {"tools": "knowledge_tools", END: END}
+    )
+    graph_builder.add_conditional_edges(
+        "drafting", tools_condition, {"tools": "drafting_tools", END: END}
+    )
+
+    graph_builder.add_edge("knowledge_tools", "knowledge")
+    graph_builder.add_edge("drafting_tools", "drafting")
+    graph_builder.add_edge("discard", END)
+
     return graph_builder
 
 

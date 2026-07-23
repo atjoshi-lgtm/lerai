@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 from functools import lru_cache
+import base64
+
 
 from langgraph.types import Command
 from lerai.override_agent.graph import get_compiled_graph
@@ -156,24 +158,33 @@ def _value_from_message(source: Any, key: str) -> Any:
         return source.get(key)
     return getattr(source, key, None)
 
-
 def _extract_thread_id(webex_message: Any, webex_api: Any | None = None) -> str:
-    """Use parentId if present, otherwise ask Webex API, otherwise fallback to message id."""
+    """Use parentId if present, native parent block, or ask Webex API with an encoded Global ID."""
+    
+    # 1. Native WebSocket parent block (catches threaded replies instantly)
+    if isinstance(webex_message, dict):
+        if "parent" in webex_message and isinstance(webex_message["parent"], dict):
+            parent_id = webex_message["parent"].get("id")
+            if parent_id:
+                return str(parent_id)
+
     candidates = []
     if isinstance(webex_message, dict):
         if "data" in webex_message:
             candidates.append(webex_message["data"])
         if "message" in webex_message:
             candidates.append(webex_message["message"])
+        if "object" in webex_message:
+            candidates.append(webex_message["object"])
     candidates.append(webex_message)
 
-    # 1. Local search for parentId (if the bot library didn't strip it)
+    # 2. Standard parentId search
     for candidate in candidates:
         parent_id = _value_from_message(candidate, "parentId")
         if parent_id:
             return str(parent_id)
 
-    # 2. Extract the current message ID
+    # 3. Extract the current message ID
     message_id = None
     for candidate in candidates:
         msg_id = _value_from_message(candidate, "id")
@@ -184,15 +195,22 @@ def _extract_thread_id(webex_message: Any, webex_api: Any | None = None) -> str:
     if not message_id:
         return "default-thread"
 
-    # 3. BULLETPROOF FALLBACK: Ask Webex directly
+    # 4. BULLETPROOF FALLBACK: Ask Webex directly using a Base64 Global ID
     api = _get_api(webex_api)
     if api:
         try:
-            real_msg = api.messages.get(message_id)
+            # webexteamssdk requires base64 encoded Global IDs. If it's a raw UUID, encode it.
+            if not message_id.startswith("Y2lzY2"):  # 'cisc' in base64
+                global_id = base64.b64encode(f"ciscospark://us/MESSAGE/{message_id}".encode()).decode('utf-8')
+            else:
+                global_id = message_id
+
+            real_msg = api.messages.get(global_id)
             if hasattr(real_msg, "parentId") and real_msg.parentId:
                 return str(real_msg.parentId)
         except Exception as exc:
-            logger.warning("Could not verify parentId via Webex API", exc_info=exc)
+            # We don't need to log this verbosely anymore if the 'parent' dict catches it natively
+            pass
 
     return message_id
 

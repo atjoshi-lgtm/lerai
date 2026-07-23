@@ -9,4 +9,11 @@ langgraph
 langgraph-checkpoint
 langgraph-checkpoint-sqlite
 langchain-openai
+langchain-chroma
 langchain-core
+langchain-huggingface
+langchain-text-splitters
+faiss-cpu
+tiktoken
+langchain-community
+rank-bm25

@@ -14,7 +14,9 @@ It provides command-driven workflows for:
 - semantic override conflict classification with scope-aware warnings,
 - LeROY documentation search and infrastructure lookup for override-related questions.
 
-The override conflict pipeline now uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, and partial map overlap.
+The override conflict pipeline always evaluates against the absolute latest production state by using an ephemeral Git workspace cloned per request. Each request generates a unique temporary directory, clones the Git repository there, and evaluates conflict detection against the cloned `override.toml`. The workspace is deleted after the request completes, ensuring fresh production state is never stale.
+
+The override conflict pipeline also uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, and partial map overlap.
 
 The override agent also includes a hybrid LeROY knowledge-base search over `docs/leroy_manual/`, backed by a persisted local index in `lerai/data/chroma_index/`. That index is generated locally on demand and is intentionally gitignored.
 
@@ -45,4 +47,11 @@ Run the local override-agent CLI harness:
 python3 test_cli.py
 ```
 
-The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging.
+The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
+
+Note: Running `test_cli.py` requires the Git environment variables to be set:
+
+```bash
+export LEROY_GIT_REPO_URL=<your-repo-url>
+export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
+```

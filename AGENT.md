@@ -94,6 +94,7 @@ Tooling and search:
 Environment:
 - Activate venv: source /home/atjoshi/lerai/.venv/bin/activate
 - Use python3 for local commands.
+- Export all environment variables using `source exports.sh`
 
 Baseline validation commands:
 - Full regression suite:

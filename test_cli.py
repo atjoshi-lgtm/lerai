@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from datetime import datetime
 import uuid
@@ -17,6 +18,11 @@ try:
     from override_agent.graph import get_compiled_graph
 except ModuleNotFoundError:
     from lerai.override_agent.graph import get_compiled_graph
+
+try:
+    from git_workspace import TransientGitWorkspace
+except ModuleNotFoundError:
+    from lerai.git_workspace import TransientGitWorkspace
 
 os.makedirs("logs/test_cli", exist_ok=True)
 _log_filename = os.path.join("logs/test_cli", f"override_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
@@ -92,8 +98,10 @@ def main() -> int:
     
     # logger.info(graph.get_graph(xray=True).draw_mermaid())
     # Generate a unique thread ID every time the script is executed
+    request_uuid = uuid.uuid4().hex
+    workspace_path = f"/tmp/leroy_config_test_{request_uuid}"
     thread_id = f"cli_test_{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id, "workspace_path": workspace_path}}
 
     required_env = [
         "AZURE_OPENAI_URL",
@@ -116,32 +124,38 @@ def main() -> int:
     is_interrupted = False
     seen_messages: set[str] = set()
 
-    while True:
-        try:
-            user_text = input("\n👤 You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting.")
-            return 0
+    workspace = TransientGitWorkspace(local_path=workspace_path)
+    workspace.clone()
 
-        if user_text.lower() in {"exit", "quit"}:
-            print("Exiting.")
-            return 0
+    try:
+        while True:
+            try:
+                user_text = input("\n👤 You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nExiting.")
+                return 0
 
-        if not user_text:
-            continue
+            if user_text.lower() in {"exit", "quit"}:
+                print("Exiting.")
+                return 0
 
-        try:
-            if is_interrupted:
-                result = graph.invoke(Command(resume=user_text), config=config)
-            else:
-                result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
+            if not user_text:
+                continue
 
-            _print_new_messages(result, seen_messages)
-            is_interrupted = _print_interrupts(result)
+            try:
+                if is_interrupted:
+                    result = graph.invoke(Command(resume=user_text), config=config)
+                else:
+                    result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
 
-        except Exception as exc:
-            logger.error("Error invoking graph: %s", exc, exc_info=True)
-            print(f"\n❌ Error invoking graph: {exc}\n")
+                _print_new_messages(result, seen_messages)
+                is_interrupted = _print_interrupts(result)
+
+            except Exception as exc:
+                logger.error("Error invoking graph: %s", exc, exc_info=True)
+                print(f"\n❌ Error invoking graph: {exc}\n")
+    finally:
+        shutil.rmtree(workspace_path, ignore_errors=True)
 
 
 if __name__ == "__main__":

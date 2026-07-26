@@ -6,6 +6,7 @@ import pathlib
 from pathlib import Path
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
@@ -16,16 +17,21 @@ from lerai.overrides_pipeline.entity_extractor import extract_intent
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROJECT_ROOT = PROJECT_ROOT
 DATA_DIR = pathlib.Path(PROJECT_ROOT) / "lerai" / "data"
-OVERRIDE_TOML_PATH = PROJECT_ROOT / "override.toml"
 OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
 SCHEMA_PATH = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_entity_extractor_tool.json"
 
 
-def _load_override_toml_read_only() -> str:
+def _load_override_toml_read_only(workspace_path: str) -> str:
     """Reads override.toml in read-only mode; never writes to disk."""
-    if not OVERRIDE_TOML_PATH.exists():
-        return ""
-    return OVERRIDE_TOML_PATH.read_text(encoding="utf-8")
+    if not workspace_path:
+        raise ValueError("workspace_path is required but was not provided.")
+
+    toml_path = Path(workspace_path) / "override.toml"
+    if not toml_path.exists():
+        raise FileNotFoundError(
+            f"override.toml not found in cloned workspace: {workspace_path}"
+        )
+    return toml_path.read_text(encoding="utf-8")
 
 
 def _load_override_schema() -> dict[str, Any]:
@@ -52,12 +58,13 @@ def extract_override_intent(synthesized_request: str) -> str:
 
 
 @tool
-def detect_override_conflicts(intent_json: str) -> dict[str, Any]:
+def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[str, Any]:
     """
     STEP 2 TOOL. Pass the JSON string output from extract_override_intent here.
     Reads override.toml and detects if this new intent conflicts with live records.
     """
     try:
+        workspace_path = config.get("configurable", {}).get("workspace_path")
         new_intent = json.loads(intent_json)
         invalid_mapnames = find_invalid_mapnames(new_intent)
         warnings: list[str] = []
@@ -81,19 +88,7 @@ def detect_override_conflicts(intent_json: str) -> dict[str, Any]:
                 "invalid_mapnames": invalid_mapnames,
             }
             
-        current_toml = _load_override_toml_read_only()
-
-        if not current_toml:
-            message = "override.toml was not found; conflict detection skipped."
-            if warnings:
-                message = f"{message} Warning: {' '.join(warnings)}"
-            return {
-                "has_conflict": False,
-                "message": message,
-                "conflicts": [],
-                "warnings": warnings,
-                "invalid_mapnames": invalid_mapnames,
-            }
+        current_toml = _load_override_toml_read_only(workspace_path)
 
         # Call the upgraded semantic conflict detector
         found_conflicts = detect_conflicts(new_intent, current_toml)

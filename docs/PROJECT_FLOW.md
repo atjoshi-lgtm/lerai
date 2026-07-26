@@ -78,7 +78,7 @@ Important modules under `lerai/`:
 | `lerai/quota_exceed.py` | Calls Query2 endpoint and formats quota/object-limit exceedance results. |
 | `lerai/promote.py` | Implements promotion request and approval token flow. |
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
-| `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app, including thread-id resolution (native parent blocks, `parentId`, and Webex API fallback), interrupt resume behavior, and threaded reply handling. |
+| `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app. Per request: (1) generates a unique UUID for the request, (2) creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory, (3) clones the Git repo there using TransientGitWorkspace, (4) passes `workspace_path` to the LangGraph config so conflict detection reads from the fresh clone, and (5) guarantees cleanup with try/finally. Also handles thread-id resolution (native parent blocks, `parentId`, and Webex API fallback), interrupt/resume behavior, and threaded reply handling. |
 | `lerai/override_agent/graph.py` | Builds a singleton LangGraph app with a persistent SQLite checkpointer (`lerai_checkpoints.db`). |
 | `lerai/override_agent/nodes.py` | Defines the supervisor node, Azure model wiring, tool routing (via `SUPERVISOR_TOOLS` from `tools.py`), debug-level pretty-printed LLM request/response logging, and the initial input builder. |
 | `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, and directive-schema lookup. |
@@ -109,6 +109,8 @@ graph TD
     Router --> Quota[quota_exceed.py]
     Router --> Promote[promote.py]
     Router --> OverrideEntry[leroy_overrides_writer.py]
+    OverrideEntry --> GitWS[git_workspace.py<br/>clones ephemeral repo<br/>per request]
+    GitWS --> GitSSH{{"/tmp/leroy_config_test_UUID"}}
     OverrideEntry --> OverrideGraph[override_agent/graph.py]
     OverrideGraph --> Supervisor[override_agent/nodes.py supervisor]
     Supervisor --> ToolNode[LangGraph ToolNode]
@@ -121,6 +123,7 @@ graph TD
     ToolNode --> ToolSchema[lookup_directive_schema]
     ToolExtract --> Extract[overrides_pipeline/entity_extractor.py]
     ToolConflict --> Conflict[overrides_pipeline/conflict_detector.py]
+    ToolConflict --> GitWS
     ToolToml --> Gen[overrides_pipeline/toml_generator.py]
     ToolDocs --> KB[override_agent/knowledge_base.py]
     KB --> LeroyDocs[docs/leroy_manual/*.md]

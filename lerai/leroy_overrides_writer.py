@@ -10,6 +10,8 @@ import os
 import argparse
 import logging
 import json
+import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 from functools import lru_cache
@@ -30,6 +32,7 @@ CONFLICT_RULES_FILE = PROMPTS_DIR / "leroy_override_conflict_rules.json"
 LOG_FILE_PATH = PROJECT_ROOT / "leroy_override_pipeline.log"
 
 from lerai.logging_utils import redact_value
+from lerai.git_workspace import TransientGitWorkspace
 from lerai.override_agent.graph import get_compiled_graph
 from lerai.override_agent.nodes import build_initial_input
 from lerai.overrides_pipeline.entity_extractor import extract_intent
@@ -131,16 +134,6 @@ def load_schema() -> dict:
     with open(schema_path, "r", encoding="utf-8") as f:
         schema = json.load(f)
     return schema
-
-def load_current_toml() -> str:
-    """Loads the current production TOML to check for conflicts."""
-    toml_path = PROJECT_ROOT / "override.toml"
-    if not toml_path.exists():
-        logger.warning("override.toml not found. Proceeding without conflict detection.")
-        return ""
-    with open(toml_path, "r", encoding="utf-8") as f:
-        toml_content = f.read()
-    return toml_content
 
 
 def _load_webex_api():
@@ -298,14 +291,20 @@ def write_toml(
     Orchestrates override generation through LangGraph and optionally posts
     the final markdown response directly into the originating Webex thread.
     """
+    request_uuid = uuid.uuid4().hex
+    workspace_path = f"/tmp/leroy_config_test_{request_uuid}"
+
     try:
+        workspace = TransientGitWorkspace(local_path=workspace_path)
+        workspace.clone()
+
         app = get_compiled_graph()
         
         # Instantiate the API early so we can do the foolproof lookup
         api = _get_api(webex_api)
         
         thread_id = _extract_thread_id(webex_message, webex_api=api) if webex_message is not None else "local-cli"
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {"configurable": {"thread_id": thread_id, "workspace_path": workspace_path}}
 
         # Check if this thread is currently paused/interrupted
         current_state = app.get_state(config)
@@ -347,6 +346,8 @@ def write_toml(
     except Exception as exc:
         logger.error("Override pipeline failed", extra={"error": redact_value(str(exc))})
         return _render_template("error", error_message=str(exc))
+    finally:
+        shutil.rmtree(workspace_path, ignore_errors=True)
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a Leroy override TOML stanza")

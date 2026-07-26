@@ -9,7 +9,7 @@ The tests are intentionally designed to run without a Webex bot server, MySQL da
 Run the full no-server suite from the repository root:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation
 ```
 
 Run the compile check:
@@ -28,28 +28,33 @@ The local environment uses `python3`; `python` may not be available on the PATH.
 
 ## Manual Interactive Override-Agent Check
 
-The two most recent `/write_override` commits introduced an interactive LangGraph agent with thread checkpointing and interrupt/resume behavior. In addition to unit tests, run the local CLI harness for a quick manual sanity check:
+The override agent uses an interactive LangGraph with thread checkpointing and interrupt/resume behavior. The bot always evaluates conflict detection against fresh production state using an ephemeral cloned workspace (same as production). In addition to unit tests, run the local CLI harness for a quick manual sanity check:
 
 ```bash
+export LEROY_GIT_REPO_URL=<your-git-repo>
+export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 python3 test_cli.py
 ```
 
 What to verify manually:
 
 - The CLI prints a unique session thread id.
+- The CLI creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory and clones the repo there.
 - The assistant can ask a follow-up clarification when needed.
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
 - A plain threaded follow-up message (without retyping `/write_override`) continues the same override flow.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
 - Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.
+- **Conflict checks always read from the cloned workspace `override.toml`, not the local project root.**
 - Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
 - Conflict checks also surface map-name validation warnings for unknown map shortnames.
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
+- On exit (normal or error), the ephemeral workspace is deleted.
 
-Debug output from the run is written to a timestamped file under `logs/test_cli/`, for example `logs/test_cli/override_agent_YYYYMMDD_HHMMSS.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log. The supervisor now also logs pretty-printed LLM request and response payloads there for debugging.
+Debug output from the run is written to a timestamped file under `logs/test_cli/`, for example `logs/test_cli/override_agent_YYYYMMDD_HHMMSS.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log. The supervisor also logs pretty-printed LLM request and response payloads there for debugging. The CLI automatically creates a unique ephemeral workspace per session and cleans it up when the session ends (including on error).
 
 ## Test Files at a Glance
 
@@ -65,6 +70,49 @@ Debug output from the run is written to a timestamped file under `logs/test_cli/
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
 | `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
 | `tests/test_mapname_validation.py` | Verifies map-name validation against `lerai/data/maps.csv` and warning payload fields returned by `detect_override_conflicts`. |
+
+## `tests/test_git_workspace.py`
+
+This file tests the transient Git workspace module (`lerai/git_workspace.py`).
+
+These tests do not make actual Git operations or network calls. They use mocking to validate configuration, locking, cleanup, and error handling behavior.
+
+### `test_clone_removes_existing_workspace_and_sets_ssh_command`
+
+Checks that `clone()` method:
+- Removes any existing directory at the workspace path.
+- Injects `GIT_SSH_COMMAND` into the subprocess environment with the SSH key path.
+- Calls `git clone` with the correct arguments.
+- Returns the workspace path.
+
+Why it matters: the workspace must be fresh on every request, and SSH authentication must be injected at clone time.
+
+### `test_clone_raises_lock_error_when_lock_is_busy`
+
+Checks that acquiring a lock with timeout=0 (fail-fast) raises `GitLockError` if the lock is already held.
+
+Why it matters: concurrent clone requests must fail immediately rather than blocking.
+
+### `test_commit_formats_author_and_message`
+
+Checks that `commit()` with user_name, user_email, ticket_id, and commit_message:
+- Stages files with `git add -A`.
+- Commits with `--author="<user_name> <user_email>"` format.
+- Formats the message as `[<ticket_id>] <commit_message> (Assisted by LeRAI bot)`.
+
+Why it matters: override commits must be auditable with user attribution and Jira ticket linkage.
+
+### `test_commit_includes_stderr_on_failure`
+
+Checks that when Git commands fail, the exception message includes stderr output.
+
+Why it matters: Git errors must be visible for debugging.
+
+### `test_push_includes_stderr_on_failure`
+
+Checks that `push()` failures include stderr in the exception message.
+
+Why it matters: push errors must be surfaced with detail for troubleshooting.
 
 ## `tests/test_mapname_validation.py`
 

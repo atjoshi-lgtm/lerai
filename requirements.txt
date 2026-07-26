@@ -17,3 +17,4 @@ faiss-cpu
 tiktoken
 langchain-community
 rank-bm25
+filelock

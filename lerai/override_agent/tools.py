@@ -444,12 +444,27 @@ def apply_override_to_workspace(
     - A single JSON object (backward-compatible), or
     - A JSON list of objects for multi-stanza append.
     """
+    def _flatten_intent(intent: dict[str, Any]) -> dict[str, Any]:
+        """Flattens nested JSON payloads into a flat dictionary for TOML."""
+        flat = {}
+        for k, v in intent.items():
+            if isinstance(v, dict):
+                for sub_k, sub_v in v.items():
+                    flat[sub_k] = sub_v
+            else:
+                flat[k] = v
+        return flat
+
     try:
         parsed_new = json.loads(new_intents_json)
-        new_intents = parsed_new if isinstance(parsed_new, list) else [parsed_new]
+        raw_new_intents = parsed_new if isinstance(parsed_new, list) else [parsed_new]
+        
+        # FIX 1: ONLY flatten the new intents so they don't write as nested TOML
+        new_intents = [_flatten_intent(intent) for intent in raw_new_intents]
+
         raw_target_intents = json.loads(target_intents_json) if target_intents_json else []
 
-        # FIX: Ensure we extract the inner "record" if the LLM passes the conflict wrapper
+        # FIX 2: Revert to your working logic for target_intents (do not mutate them!)
         target_intents = []
         for item in raw_target_intents:
             if isinstance(item, dict) and "record" in item:

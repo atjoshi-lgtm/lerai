@@ -10,14 +10,14 @@ It provides command-driven workflows for:
 - DP and FD question answering,
 - Query2 variance and quota checks,
 - promotion request/approval flow,
-- interactive LeROY override TOML generation through a thread-aware agent,
-- approval-gated override deployment previews with explicit add/delete stanza review,
-- semantic override conflict classification with scope-aware warnings,
+- interactive LeROY override TOML generation through a thread-aware agent that writes flat TOML records,
+- approval-gated override deployment previews with explicit add/delete stanza review and split-and-replace guidance for partial overlaps,
+- semantic override conflict classification with scope-aware warnings and explicit replace/add guidance,
 - LeROY documentation search and infrastructure lookup for override-related questions.
 
 The override conflict pipeline always evaluates against the absolute latest production state by using an ephemeral Git workspace cloned per request. Each request generates a unique temporary directory, clones the Git repository there, and evaluates conflict detection against the cloned `override.toml`. The workspace is deleted after the request completes, ensuring fresh production state is never stale.
 
-The override conflict pipeline also uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, partial map overlap, and partial geographic overlap.
+The override conflict pipeline also uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, partial map overlap, and partial geographic overlap. The writer now normalizes nested intent payloads before TOML generation so override records stay flat in the generated file.
 
 The override agent also includes a hybrid LeROY knowledge-base search over `docs/leroy_manual/`, backed by a persisted local index in `lerai/data/chroma_index/`. That index is generated locally on demand and is intentionally gitignored.
 

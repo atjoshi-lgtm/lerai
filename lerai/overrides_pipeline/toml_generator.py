@@ -190,6 +190,7 @@ def execute_ast_update(
         new_record = tomlkit.table()
         for key, value in intent.items():
             new_record[key] = value
+        new_record.add(tomlkit.nl())
         records.append(new_record)
 
     logger.debug(

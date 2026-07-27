@@ -71,6 +71,75 @@ Access-control = "allowed"
             rendered,
         )
 
+    def test_append_adds_generated_comment_block_above_new_stanza(self):
+        original = """[[override-records]]
+Ticket-id = "SEED"
+Mapnames = ["seed"]
+Region-number = [0]
+Access-control = "allowed"
+"""
+
+        doc = tomlkit.parse(original)
+        updated = execute_ast_update(
+            doc,
+            target_intents=[],
+            new_intents=[
+                {
+                    "Ticket-id": "LEROYOPS-777",
+                    "Mapnames": ["mm3"],
+                    "Region-number": [53419],
+                    "Object-count-quota-pct": [30],
+                }
+            ],
+            conflict_rules={
+                "scope_keys": [
+                    "Region-default",
+                    "Region-geo",
+                    "Region-country",
+                    "Region-metro",
+                    "Region-number",
+                ],
+                "metadata_keys": ["Ticket-id", "Start-time", "End-time", "Mapnames"],
+            },
+        )
+
+        rendered = tomlkit.dumps(updated)
+        self.assertIn("## LEROYOPS-777", rendered)
+        self.assertIn(
+            "## LEROYOPS-777\n## Set object count quota for mm3 in region 53419.\n##\n[[override-records]]\nTicket-id = \"LEROYOPS-777\"",
+            rendered,
+        )
+
+    def test_append_to_empty_doc_adds_generated_comment_block(self):
+        doc = tomlkit.parse("")
+        updated = execute_ast_update(
+            doc,
+            target_intents=[],
+            new_intents=[
+                {
+                    "Ticket-id": "LEROYOPS-888",
+                    "Mapnames": ["d"],
+                    "Region-country": ["US"],
+                    "Access-control": "allowed",
+                }
+            ],
+            conflict_rules={
+                "scope_keys": [
+                    "Region-default",
+                    "Region-geo",
+                    "Region-country",
+                    "Region-metro",
+                    "Region-number",
+                ],
+                "metadata_keys": ["Ticket-id", "Start-time", "End-time", "Mapnames"],
+            },
+        )
+
+        rendered = tomlkit.dumps(updated)
+        self.assertTrue(rendered.startswith("##\n## LEROYOPS-888\n"))
+        self.assertIn("## Allow d in country US.", rendered)
+        self.assertIn("[[override-records]]\nTicket-id = \"LEROYOPS-888\"", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

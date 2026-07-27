@@ -102,6 +102,130 @@ def _extract_record_profile(
     return scope_key, scope_value_set, directive_key, mapname_set
 
 
+def _extract_intent_scope_and_directive(
+    intent: Dict[str, Any],
+    scope_keys: List[str],
+    metadata_keys: List[str],
+) -> Tuple[str, str]:
+    """Extracts scope and directive keys from a flattened intent record."""
+    scope_key = ""
+    for key in scope_keys:
+        if key in intent:
+            scope_key = key
+            break
+
+    excluded = set(scope_keys) | set(metadata_keys)
+    directive_key = ""
+    for key in intent.keys():
+        if key not in excluded:
+            directive_key = key
+            break
+
+    return scope_key, directive_key
+
+
+def _build_generated_stanza_comment(
+    intent: Dict[str, Any],
+    scope_keys: List[str],
+    metadata_keys: List[str],
+) -> str:
+    """Builds a deterministic section comment for a newly appended stanza."""
+    scope_key, directive_key = _extract_intent_scope_and_directive(
+        intent, scope_keys, metadata_keys
+    )
+
+    ticket = str(intent.get("Ticket-id", "AUTO-GENERATED")).strip() or "AUTO-GENERATED"
+
+    mapnames = intent.get("Mapnames", [])
+    if isinstance(mapnames, list) and mapnames:
+        map_desc = ", ".join(str(name) for name in mapnames)
+    else:
+        map_desc = "all maps"
+
+    if scope_key:
+        scope_vals = intent.get(scope_key, [])
+        if isinstance(scope_vals, list):
+            scope_desc = ", ".join(str(v) for v in scope_vals)
+        else:
+            scope_desc = str(scope_vals)
+        scope_phrase = f"{scope_key}: {scope_desc}" if scope_desc else scope_key
+    else:
+        scope_phrase = "scope: unknown"
+
+    directive_value = intent.get(directive_key) if directive_key else None
+
+    def _scope_phrase() -> str:
+        if scope_key == "Region-default":
+            return "default regions"
+        if scope_key == "Region-number":
+            return (
+                f"region {scope_desc}"
+                if scope_desc and "," not in scope_desc
+                else f"regions {scope_desc}"
+            )
+        if scope_key == "Region-country":
+            return (
+                f"country {scope_desc}"
+                if scope_desc and "," not in scope_desc
+                else f"countries {scope_desc}"
+            )
+        if scope_key == "Region-geo":
+            return (
+                f"geo {scope_desc}"
+                if scope_desc and "," not in scope_desc
+                else f"geos {scope_desc}"
+            )
+        if scope_key == "Region-metro":
+            return (
+                f"metro {scope_desc}"
+                if scope_desc and "," not in scope_desc
+                else f"metros {scope_desc}"
+            )
+        return scope_phrase
+
+    def _action_phrase() -> str:
+        if directive_key == "Access-control":
+            access_val = str(directive_value).strip().lower()
+            if access_val == "must-exclude":
+                return f"Exclude {map_desc}"
+            if access_val == "must-include":
+                return f"Add {map_desc}"
+            if access_val == "allowed":
+                return f"Allow {map_desc}"
+            return f"Set access control for {map_desc}"
+
+        if directive_key == "Object-count-quota-pct":
+            return f"Set object count quota for {map_desc}"
+        if directive_key == "Quota-pct":
+            return f"Set disk quota percentage for {map_desc}"
+        if directive_key == "Quota-tb":
+            return f"Set disk quota for {map_desc}"
+        if directive_key == "Quota-multiplier":
+            return f"Set quota multiplier for {map_desc}"
+        if directive_key == "Traffic-gbps":
+            return f"Set traffic demand for {map_desc}"
+        if directive_key == "Traffic-multiplier":
+            return f"Set traffic multiplier for {map_desc}"
+        if directive_key == "BLC-only":
+            return f"Set BLC-only for {map_desc}"
+        if directive_key == "FCS-only":
+            return f"Set FCS-only for {map_desc}"
+        if directive_key:
+            return f"Set {directive_key} for {map_desc}"
+        return f"Apply override for {map_desc}"
+
+    summary_line = f"## {_action_phrase()} in {_scope_phrase()}."
+
+    return "\n".join(
+        [
+            "##",
+            f"## {ticket}",
+            summary_line,
+            "##",
+        ]
+    )
+
+
 def _extract_comment_lines(node: Any) -> list[str]:
     """Extracts comment-only lines from a TOML record while preserving order."""
     if not hasattr(node, "as_string"):
@@ -293,12 +417,35 @@ def execute_ast_update(
                     break
 
     # Append phase: materialize each intent as a fresh table.
+    had_records = doc.get("override-records") is not None
+    injected_first_comment = False
     records = doc.get("override-records")
     if records is None:
+        if new_intents:
+            first_comment = _build_generated_stanza_comment(
+                new_intents[0], scope_keys, metadata_keys
+            )
+            if first_comment:
+                doc.add(tomlkit.ws(first_comment + "\n"))
+                injected_first_comment = True
         records = tomlkit.aot()
         doc.append("override-records", records)
 
-    for intent in new_intents:
+    for idx, intent in enumerate(new_intents):
+        comment_block = _build_generated_stanza_comment(
+            intent, scope_keys, metadata_keys
+        )
+
+        if comment_block:
+            if (not had_records) and injected_first_comment and idx == 0:
+                comment_block = ""
+
+        if comment_block:
+            if len(records) > 0 and hasattr(records[-1], "add"):
+                records[-1].add(tomlkit.ws("\n" + comment_block + "\n"))
+            else:
+                doc.add(tomlkit.ws(comment_block + "\n"))
+
         new_record = tomlkit.table()
         for key, value in intent.items():
             new_record[key] = value

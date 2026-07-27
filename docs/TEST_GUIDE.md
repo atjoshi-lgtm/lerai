@@ -49,6 +49,8 @@ What to verify manually:
 - The assistant can ask a follow-up clarification when needed.
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
+- If a run emits multiple interrupts, all interrupts are shown in order in the response (not just the first one).
+- Interrupt output is human-readable markdown (no raw `Interrupt(value='...')` wrappers).
 - A plain threaded follow-up message (without retyping `/write_override`) continues the same override flow.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
 - Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.

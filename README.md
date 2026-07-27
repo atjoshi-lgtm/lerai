@@ -48,7 +48,7 @@ Run the local override-agent CLI harness:
 python3 test_cli.py
 ```
 
-The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts with a visible add/delete TOML preview banner so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
+The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
 
 Note: Running `test_cli.py` requires the Git environment variables to be set:
 

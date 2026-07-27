@@ -264,6 +264,44 @@ def _extract_last_ai_markdown(graph_result: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_interrupt_payload(interrupt_obj: Any) -> str:
+    """Extracts the human-readable payload from a LangGraph interrupt object."""
+    value = _value_from_message(interrupt_obj, "value")
+    if value is None and isinstance(interrupt_obj, dict):
+        value = interrupt_obj.get("value")
+    if value is None:
+        value = interrupt_obj
+    return str(value)
+
+
+def _format_approval_interrupt(payload: str) -> str:
+    """Formats approval interrupts with the same CLI-friendly action banner."""
+    text = (payload or "").strip()
+    if not text:
+        return ""
+
+    if "ACTION REQUIRED: APPROVAL REQUEST" in text:
+        return text
+
+    return "\n".join(
+        [
+            "⚠️  ACTION REQUIRED: APPROVAL REQUEST",
+            text,
+        ]
+    )
+
+
+def _format_all_interrupts(interrupts: list[Any]) -> str:
+    """Formats all interrupt payloads in order, skipping empty payloads."""
+    rendered_blocks: list[str] = []
+    for interrupt_obj in interrupts:
+        payload = _extract_interrupt_payload(interrupt_obj)
+        formatted = _format_approval_interrupt(payload)
+        if formatted.strip():
+            rendered_blocks.append(formatted)
+    return "\n\n".join(rendered_blocks)
+
+
 def _send_threaded_webex_reply(
     markdown: str,
     thread_id: str,
@@ -323,7 +361,7 @@ def write_toml(
 
         interrupts = graph_result.get("__interrupt__")
         if interrupts:
-            final_response = str(interrupts[0])
+            final_response = _format_all_interrupts(interrupts)
         else:
             final_response = _extract_last_ai_markdown(graph_result)
 

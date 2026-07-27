@@ -102,7 +102,8 @@ class GeographicalTaxonomy:
     def compare_scopes(self, scope_1_key: str, scope_1_vals: List, scope_2_key: str, scope_2_vals: List) -> str:
         """
         Determines the hierarchical relationship between two scopes.
-        Returns: EXACT_MATCH, SCOPE_1_IS_BROADER, SCOPE_1_IS_NARROWER, or NO_OVERLAP.
+        Returns: EXACT_MATCH, SCOPE_1_IS_BROADER, SCOPE_1_IS_NARROWER,
+        SCOPE_1_IS_BROADER_PARTIAL, SCOPE_1_IS_NARROWER_PARTIAL, or NO_OVERLAP.
         """
         lvl1 = self.HIERARCHY.get(scope_1_key)
         lvl2 = self.HIERARCHY.get(scope_2_key)
@@ -121,21 +122,35 @@ class GeographicalTaxonomy:
 
         # Scenario B: Scope 1 is broader (e.g., Geo vs Country)
         elif lvl1 < lvl2:
-            # Check if any narrow item in Scope 2 rolls up to a broad item in Scope 1
+            # Count how many Scope 2 values are covered by Scope 1 ancestry.
+            # This distinguishes total subset from partial overlap.
+            match_count = 0
             for v2 in s2_set:
                 ancestor = self._get_ancestor(v2, lvl2, lvl1)
                 if ancestor and ancestor in s1_set:
-                    return "SCOPE_1_IS_BROADER"
-            return "NO_OVERLAP"
+                    match_count += 1
+
+            if match_count == 0:
+                return "NO_OVERLAP"
+            if match_count == len(s2_set):
+                return "SCOPE_1_IS_BROADER"
+            return "SCOPE_1_IS_BROADER_PARTIAL"
 
         # Scenario C: Scope 1 is narrower (e.g., Metro vs Geo)
         else:
-            # Check if any narrow item in Scope 1 rolls up to a broad item in Scope 2
+            # Count how many Scope 1 values are covered by Scope 2 ancestry.
+            # This distinguishes total subset from partial overlap.
+            match_count = 0
             for v1 in s1_set:
                 ancestor = self._get_ancestor(v1, lvl1, lvl2)
                 if ancestor and ancestor in s2_set:
-                    return "SCOPE_1_IS_NARROWER"
-            return "NO_OVERLAP"
+                    match_count += 1
+
+            if match_count == 0:
+                return "NO_OVERLAP"
+            if match_count == len(s1_set):
+                return "SCOPE_1_IS_NARROWER"
+            return "SCOPE_1_IS_NARROWER_PARTIAL"
         
 def _as_json(value: Any) -> str:
     """Best-effort pretty serialization for runtime-generated objects."""
@@ -326,7 +341,14 @@ def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict
         conflict_type = None
         message = ""
 
-        if scope_relation == "EXACT_MATCH" and dir_relation == "OPPOSITE":
+        if scope_relation in {"SCOPE_1_IS_BROADER_PARTIAL", "SCOPE_1_IS_NARROWER_PARTIAL"}:
+            conflict_type = "PARTIAL_OVERLAP"
+            message = (
+                f"Geographical partial overlap: Your rule overlaps with some, but not all, "
+                f"of the geographic areas in the existing rule from {rec_ticket}."
+            )
+
+        elif scope_relation == "EXACT_MATCH" and dir_relation == "OPPOSITE":
             conflict_type = "DIRECT_COLLISION"
             message = f"Hard collision: Exactly contradicts existing rule in {rec_ticket}."
             

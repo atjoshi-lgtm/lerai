@@ -79,18 +79,29 @@ def _print_new_messages(result: dict[str, Any], seen_messages: set[str]) -> None
             logger.debug("[Tool Result (%s)] %s", getattr(msg, "name", "unknown"), truncated)
 
 
-def _print_interrupts(result: dict[str, Any]) -> bool:
-    """Log interrupt payloads when graph returns __interrupt__."""
-    interrupts = result.get("__interrupt__")
-    if not interrupts:
-        return False
+def _print_interrupts(graph, config, result) -> bool:
+    """Checks if the graph is currently interrupted and prints the interrupt payload."""
+    state = graph.get_state(config)
+    
+    # Check if there are active tasks with interrupts
+    if state.tasks:
+        for task in state.tasks:
+            if getattr(task, "interrupts", None):
+                for intr in task.interrupts:
+                    diff_payload = getattr(intr, "value", str(intr))
+                    print("\n" + "=" * 50)
+                    print("⚠️  ACTION REQUIRED: APPROVAL REQUEST")
+                    print("=" * 50)
+                    print(diff_payload)
+                    print("=" * 50 + "\n")
+                return True
 
-    logger.warning("[Graph Interrupted / Paused]")
-    for item in interrupts:
-        logger.warning(str(item))
-    print("\n⚠️  [Graph Interrupted / Paused] — see override_agent.log for details.")
-    print("\nReply with your resolution to continue.\n")
-    return True
+    # Fallback check on result if state tasks aren't populated
+    if isinstance(result, dict) and "__interrupt__" in result:
+        print("\n⚠️  [Graph Interrupted / Paused]")
+        return True
+
+    return False
 
 
 def main() -> int:
@@ -149,7 +160,7 @@ def main() -> int:
                     result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
 
                 _print_new_messages(result, seen_messages)
-                is_interrupted = _print_interrupts(result)
+                is_interrupted = _print_interrupts(graph, config, result)
 
             except Exception as exc:
                 logger.error("Error invoking graph: %s", exc, exc_info=True)

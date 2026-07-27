@@ -105,13 +105,14 @@ def _extract_record_profile(
 def execute_ast_update(
     doc: tomlkit.TOMLDocument,
     target_intents: List[Dict[str, Any]],
-    new_intent: Dict[str, Any],
+    new_intents: List[Dict[str, Any]],
     conflict_rules: Dict[str, Any],
 ) -> tomlkit.TOMLDocument:
     """Performs a deterministic "Nuke and Append" mutation on a TOML document.
 
     Every override-record that exactly matches one of ``target_intents`` is
-    deleted in place, after which ``new_intent`` is appended as a fresh record.
+    deleted in place, after which each item in ``new_intents`` is appended as a
+    fresh record.
     The Array of Tables is walked backwards so that in-place deletions never
     invalidate the indices of records still pending inspection.
 
@@ -124,8 +125,9 @@ def execute_ast_update(
         doc: The parsed ``tomlkit`` document to mutate.
         target_intents: Records the caller wants removed. Each is a flat mapping
             shaped like a live record (scope key, directive key, Mapnames, ...).
-        new_intent: The replacement record to append. Its keys (including
-            metadata such as ``Ticket-id`` and ``Start-time``) are copied verbatim.
+        new_intents: The replacement record(s) to append. Each record's keys
+            (including metadata such as ``Ticket-id`` and ``Start-time``) are
+            copied verbatim.
         conflict_rules: Configuration providing ``scope_keys`` and
             ``metadata_keys`` used to classify each key within a record.
 
@@ -178,20 +180,22 @@ def execute_ast_update(
                     del doc["override-records"][i]
                     break  # Record nuked; advance to the next index.
 
-    # Append phase: materialize ``new_intent`` as a fresh table.
-    new_record = tomlkit.table()
-    for key, value in new_intent.items():
-        new_record[key] = value
+    # Append phase: materialize each intent as a fresh table.
+    records = doc.get("override-records")
+    if records is None:
+        records = tomlkit.aot()
+        doc.append("override-records", records)
 
-    if doc.get("override-records") is None:
-        aot = tomlkit.aot()
-        aot.append(new_record)
-        doc.append("override-records", aot)
-    else:
-        doc["override-records"].append(new_record)
+    for intent in new_intents:
+        new_record = tomlkit.table()
+        for key, value in intent.items():
+            new_record[key] = value
+        records.append(new_record)
 
     logger.debug(
-        "Appended new override-record:\n%s", _as_json(new_intent)
+        "Appended %d new override-record(s):\n%s",
+        len(new_intents),
+        _as_json(new_intents),
     )
     return doc
 

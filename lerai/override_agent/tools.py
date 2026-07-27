@@ -9,6 +9,7 @@ from typing import Any
 import tomlkit
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.types import interrupt
 
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
 from lerai.git_workspace import TransientGitWorkspace
@@ -432,16 +433,29 @@ def _load_conflict_rules() -> dict[str, Any]:
 
 @tool
 def apply_override_to_workspace(
-    new_intent_json: str, target_intents_json: str, config: RunnableConfig
+    new_intents_json: str, target_intents_json: str, config: RunnableConfig
 ) -> dict[str, Any]:
     """
     STEP 4 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
-    Reads the live override.toml from the workspace, nukes any target records, appends the new intent,
-    and saves the file back to disk.
+    Reads the live override.toml from the workspace, nukes any target records, appends one or more
+    new intents, and saves the file back to disk.
+
+    `new_intents_json` accepts either:
+    - A single JSON object (backward-compatible), or
+    - A JSON list of objects for multi-stanza append.
     """
     try:
-        new_intent = json.loads(new_intent_json)
-        target_intents = json.loads(target_intents_json) if target_intents_json else []
+        parsed_new = json.loads(new_intents_json)
+        new_intents = parsed_new if isinstance(parsed_new, list) else [parsed_new]
+        raw_target_intents = json.loads(target_intents_json) if target_intents_json else []
+
+        # FIX: Ensure we extract the inner "record" if the LLM passes the conflict wrapper
+        target_intents = []
+        for item in raw_target_intents:
+            if isinstance(item, dict) and "record" in item:
+                target_intents.append(item["record"])
+            else:
+                target_intents.append(item)
 
         workspace_path = config.get("configurable", {}).get("workspace_path")
         if not workspace_path or not Path(workspace_path).is_dir():
@@ -458,7 +472,7 @@ def apply_override_to_workspace(
         doc = tomlkit.parse(toml_path.read_text(encoding="utf-8"))
         conflict_rules = _load_conflict_rules()
 
-        doc = execute_ast_update(doc, target_intents, new_intent, conflict_rules)
+        doc = execute_ast_update(doc, target_intents, new_intents, conflict_rules)
 
         toml_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
@@ -502,6 +516,35 @@ def commit_and_push_workspace(
         return {"ok": False, "error": f"Failed to commit and push: {exc}"}
 
 
+@tool
+def request_deployment_approval(stanzas_to_add: str, stanzas_to_delete: str, message: str = "") -> str:
+    """
+    STEP 4 TOOL. You MUST use this tool after you finish drafting the TOML and resolving conflicts,
+    and BEFORE you call apply_override_to_workspace.
+    It shows the user the exact changes and pauses execution to wait for their approval or feedback.
+    Use the `message` parameter to pass any warnings, conflict notes, or questions to the user.
+    """
+    parts: list[str] = []
+
+    if message and message.strip():
+        parts.append(f"### 💬 Agent Message:\n{message}\n")
+
+    if stanzas_to_delete and stanzas_to_delete.strip():
+        parts.append(
+            f"### 🚨 To Be Deleted (Nuked):\n```toml\n{stanzas_to_delete}\n```\n"
+        )
+
+    parts.append(f"### 🆕 To Be Added:\n```toml\n{stanzas_to_add}\n```\n")
+
+    parts.append(
+        '**Do you approve these changes for deployment?**'
+        ' (Reply "Yes" to deploy, or tell me what to change)'
+    )
+
+    markdown_string = "\n".join(parts)
+    user_response = interrupt(markdown_string)
+    return user_response
+
 SUPERVISOR_TOOLS = [
     extract_override_intent,
     detect_override_conflicts,
@@ -510,6 +553,7 @@ SUPERVISOR_TOOLS = [
     lookup_infrastructure_data,
     get_unique_infrastructure_values,
     lookup_directive_schema,
+    request_deployment_approval,
     apply_override_to_workspace,
     commit_and_push_workspace,
 ]

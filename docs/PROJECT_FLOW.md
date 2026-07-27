@@ -81,12 +81,12 @@ Important modules under `lerai/`:
 | `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app. Per request: (1) generates a unique UUID for the request, (2) creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory, (3) clones the Git repo there using TransientGitWorkspace, (4) passes `workspace_path` to the LangGraph config so conflict detection reads from the fresh clone, and (5) guarantees cleanup with try/finally. Also handles thread-id resolution (native parent blocks, `parentId`, and Webex API fallback), interrupt/resume behavior, and threaded reply handling. |
 | `lerai/override_agent/graph.py` | Builds a singleton LangGraph app with a persistent SQLite checkpointer (`lerai_checkpoints.db`). |
 | `lerai/override_agent/nodes.py` | Defines the supervisor node, Azure model wiring, tool routing (via `SUPERVISOR_TOOLS` from `tools.py`), debug-level pretty-printed LLM request/response logging, and the initial input builder. |
-| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, workspace deployment (`apply_override_to_workspace`, STEP 4) that reads/mutates/writes the workspace `override.toml`, and Git deployment (`commit_and_push_workspace`, STEP 5) that commits and pushes the change via `TransientGitWorkspace`. |
+| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, approval-gate interrupt generation (`request_deployment_approval`), workspace deployment (`apply_override_to_workspace`) that reads/mutates/writes the workspace `override.toml`, and Git deployment (`commit_and_push_workspace`) that commits and pushes the change via `TransientGitWorkspace`. |
 | `lerai/override_agent/knowledge_base.py` | Builds a hybrid retriever over `docs/leroy_manual/` using Chroma plus BM25 and persists the local vector index in `lerai/data/chroma_index/`. |
 | `lerai/override_agent/state.py` | Typed graph state (`messages`, `conflict_report`, `draft_toml`). |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. |
-| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and performs semantic conflict detection. It resolves cross-scope relationships (`Region-default` -> `Region-geo` -> `Region-country` -> `Region-metro` -> `Region-number`) using CSV mappings in `lerai/data/`, validates requested map names against `lerai/data/maps.csv`, classifies map overlap (including all-map and partial overlap cases), compares directive compatibility (currently `Access-control`), and returns structured conflict entries such as `DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, and `PARTIAL_OVERLAP`. |
-| `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. Also exposes `execute_ast_update`, a deterministic "nuke and append" AST engine that iterates the `override-records` array backwards, set-compares each live record against target intents (scope key/values, directive key, and Mapnames normalized to stripped, lower-cased sets), deletes exact matches in place, and appends the new intent as a fresh `tomlkit` table. |
+| `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and performs semantic conflict detection. It resolves cross-scope relationships (`Region-default` -> `Region-geo` -> `Region-country` -> `Region-metro` -> `Region-number`) using CSV mappings in `lerai/data/`, validates requested map names against `lerai/data/maps.csv`, classifies map overlap (including all-map and partial overlap cases), compares directive compatibility (currently `Access-control`), and now distinguishes full-scope containment from geographical partial containment before returning structured conflict entries such as `DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, and `PARTIAL_OVERLAP`. |
+| `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. Also exposes `execute_ast_update`, a deterministic "nuke and append" AST engine that iterates the `override-records` array backwards, set-compares each live record against target intents (scope key/values, directive key, and Mapnames normalized to stripped, lower-cased sets), deletes exact matches in place, and appends one or more new intents as fresh `tomlkit` tables. |
 | `lerai/git_workspace.py` | Implements `TransientGitWorkspace`, a stateless Git client that clones the config repo into an ephemeral checkout and provides `commit(...)` and `push()` used by the override writer and the `commit_and_push_workspace` tool. |
 | `lerai/netarch/netarch.py` | Provides read/write Netarch connection helpers plus export utilities: `fetch_metro_region_mapping()` for region/metro mapping data and `fetch_maps()` for map shortname catalog generation in `lerai/data/maps.csv`. |
 | `lerai/scheduled_jobs.py` | Contains daily report jobs; scheduler registration is currently commented out. |
@@ -122,6 +122,7 @@ graph TD
     ToolNode --> ToolInfra[lookup_infrastructure_data]
     ToolNode --> ToolDiscover[get_unique_infrastructure_values]
     ToolNode --> ToolSchema[lookup_directive_schema]
+    ToolNode --> ToolApprove[request_deployment_approval]
     ToolNode --> ToolApply[apply_override_to_workspace]
     ToolNode --> ToolCommit[commit_and_push_workspace]
     ToolExtract --> Extract[overrides_pipeline/entity_extractor.py]
@@ -137,6 +138,7 @@ graph TD
     ToolInfra --> InfraCsvs[lerai/data/geo_country.csv + country_metro.csv + metro_region.csv]
     ToolDiscover --> InfraCsvs
     ToolSchema --> ExtractToolSchema[lerai/prompts/leroy_override_entity_extractor_tool.json]
+    ToolApprove --> ToolApply
     OverrideGraph --> Checkpoint[(lerai_checkpoints.db)]
 
     CsvDiff --> Azure[Azure OpenAI via openai_agent_client.py]
@@ -534,7 +536,7 @@ Flow:
     - infrastructure/mapping questions are routed to `lookup_infrastructure_data`,
     - broad geography requests (for example continent-level asks) are routed through `get_unique_infrastructure_values` and then resolved by filtering countries before lookup,
     - schema/constraint questions are routed to `lookup_directive_schema`,
-    - transactional override requests are routed through `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts`, and, once the user explicitly approves, through `apply_override_to_workspace` -> `commit_and_push_workspace` to deploy.
+    - transactional override requests are routed through `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts` -> `request_deployment_approval`, and, once the user explicitly approves, through `apply_override_to_workspace` -> `commit_and_push_workspace` to deploy.
 5. `search_leroy_documentation` uses a hybrid retriever over `docs/leroy_manual/`:
     - Chroma vector search with `sentence-transformers/all-MiniLM-L6-v2`,
     - BM25 lexical retrieval,
@@ -547,10 +549,15 @@ Flow:
     - traverses hierarchy across `geo_country.csv` -> `country_metro.csv` -> `metro_region.csv` to return `countries`, `metros`, or `regions`.
 7. `get_unique_infrastructure_values` returns sorted unique values for `geos`, `countries`, or `metros` from the same CSV corpus.
 8. `lookup_directive_schema` loads `lerai/prompts/leroy_override_entity_extractor_tool.json` and returns exact directive constraints from `parameters.properties.Override-Directive.properties` with case-insensitive directive lookup.
-9. After the user explicitly approves a deployment, `apply_override_to_workspace` (STEP 4) reads the live `override.toml` from the ephemeral `workspace_path`, parses it with `tomlkit`, calls `execute_ast_update(...)` to nuke any target records and append the approved intent, and writes the mutated document back to disk. `commit_and_push_workspace` (STEP 5) then commits the change with the `LeRAI Bot` author identity and pushes it to the remote repository through `TransientGitWorkspace`. Both tools return structured `{ok, ...}` payloads so the supervisor can report success or surface a deployment error.
-10. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
-11. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
-12. If a final AI response is produced:
+9. `request_deployment_approval` is now the explicit deployment gate between drafting and mutation. It renders a pause/interrupt payload that can include:
+    - optional agent guidance/warnings,
+    - `To Be Deleted (Nuked)` stanzas,
+    - `To Be Added` stanzas,
+    - and a direct approval prompt.
+10. After the user explicitly approves, `apply_override_to_workspace` reads the live `override.toml` from the ephemeral `workspace_path`, parses it with `tomlkit`, calls `execute_ast_update(...)` to nuke any target records and append one or more approved intents, and writes the mutated document back to disk. `commit_and_push_workspace` then commits the change with the `LeRAI Bot` author identity and pushes it to the remote repository through `TransientGitWorkspace`. Both tools return structured `{ok, ...}` payloads so the supervisor can report success or surface a deployment error.
+11. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
+12. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
+13. If a final AI response is produced:
     - in Webex mode, post as a threaded reply (`parentId=thread_id`) and return `None` to command handler,
     - in local/CLI mode, return the markdown text directly.
 
@@ -559,6 +566,7 @@ Key behaviors in the current implementation:
 - Conversation state is persisted by thread id in `lerai_checkpoints.db`, enabling multi-turn refinement instead of one-shot static tool calling.
 - The same supervisor can now answer LeROY conceptual questions and exact infrastructure lookup questions without generating TOML.
 - Conflict handling now returns typed semantic findings to the supervisor; the generated TOML can still be presented with warnings attached, rather than being automatically blocked in all conflict scenarios.
+- Conflict classification now explicitly includes geographical partial-containment outcomes in addition to map-level partial overlaps, and surfaces these as `PARTIAL_OVERLAP` findings.
 - Conflict checks now also return map-name warnings when a requested map is not found in `lerai/data/maps.csv`, including `warnings` and `invalid_mapnames` fields in tool output.
 - The writer now has robust room/thread extraction for varied Webex activity payload shapes.
 - Follow-up threaded messages with no explicit command keyword are automatically treated as `/write_override` turns by the command router.
@@ -648,7 +656,7 @@ Prompt files live under `lerai/prompts/`.
 | `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
 | `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py`, `override_agent/tools.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent, and also used as the schema source for `lookup_directive_schema`. |
 | `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
-| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for request routing, conflict handling, context synthesis across user turns, and multi-scope/multi-directive request handling. The current prompt routes conceptual questions to `search_leroy_documentation`, infrastructure questions to `lookup_infrastructure_data` (smart normalization/alias/hierarchy), broad geography asks through `get_unique_infrastructure_values` + filtered lookup flow, and structural schema questions to `lookup_directive_schema`. It requires `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts` for transactional override requests, asks the assistant to present TOML plus conflict-type-specific warnings (`DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, `PARTIAL_OVERLAP`) when applicable, requires Cartesian-product handling when a request spans multiple scopes and multiple directives, and gates deployment behind explicit user approval before invoking `apply_override_to_workspace` (STEP 4) and `commit_and_push_workspace` (STEP 5). |
+| `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for request routing, conflict handling, context synthesis across user turns, and multi-scope/multi-directive request handling. The current prompt routes conceptual questions to `search_leroy_documentation`, infrastructure questions to `lookup_infrastructure_data` (smart normalization/alias/hierarchy), broad geography asks through `get_unique_infrastructure_values` + filtered lookup flow, and structural schema questions to `lookup_directive_schema`. It requires `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts` -> `request_deployment_approval` for transactional override/deploy requests, enforces an approval-or-revise loop before mutation, requires list-wrapped intents when applying (`new_intents_json`), and adds explicit split-and-replace guidance for `PARTIAL_OVERLAP` cases before invoking `apply_override_to_workspace` and `commit_and_push_workspace`. |
 | `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for override generation outcomes and conflict/warning messaging returned to the Webex user. |
 
 ## Libraries Used
@@ -733,6 +741,11 @@ The most recent changes further changed the override architecture:
 - Updated `override_agent_supervisor_system_prompt.txt` to route conceptual questions, infrastructure lookups, schema-bound constraint questions, and transactional override requests to different tool paths.
 - Updated `test_cli.py` to write timestamped logs under `logs/test_cli/` instead of a single repo-root log file.
 - Added hybrid-retrieval dependencies to `requirements.txt` and ignored the generated `lerai/data/chroma_index/` directory in `.gitignore`.
+- Added `request_deployment_approval` in `lerai/override_agent/tools.py`, using LangGraph `interrupt(...)` to pause execution with a human-readable add/delete change preview and explicit approval prompt.
+- Updated `lerai/overrides_pipeline/toml_generator.py` so `execute_ast_update(...)` appends one or more intents (`new_intents`) instead of a single replacement record.
+- Updated `lerai/overrides_pipeline/conflict_detector.py` scope comparison to distinguish full containment vs partial containment and classify partial geography overlaps as `PARTIAL_OVERLAP`.
+- Updated `lerai/prompts/override_agent_supervisor_system_prompt.txt` to enforce a draft-and-deploy pipeline with mandatory approval-gate tool usage, explicit approve/revise branching, and partial-overlap split-and-replace workflow.
+- Updated `test_cli.py` interrupt rendering to inspect graph task interrupts and print an approval-request banner with the exact deployment diff payload.
 
 Additional local branch updates reflected in this document:
 

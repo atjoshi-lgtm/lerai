@@ -24,9 +24,11 @@ Key areas and ownership boundaries:
 - lerai/lerai_main.py: Webex bot startup and command registration.
 - lerai/lerai_commands.py: Command classes and dispatch behavior.
 - lerai/leroy_overrides_writer.py: Override orchestration entry point.
+- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 4) and `commit_and_push_workspace` (STEP 5).
 - lerai/overrides_pipeline/entity_extractor.py: Structured intent extraction and normalization.
 - lerai/overrides_pipeline/conflict_detector.py: Conflict checks against existing override records.
-- lerai/overrides_pipeline/toml_generator.py: TOML stanza creation and schema validation.
+- lerai/overrides_pipeline/toml_generator.py: TOML stanza creation, schema validation, and the deterministic `execute_ast_update` nuke-and-append AST engine that mutates a parsed `override.toml` document.
+- lerai/git_workspace.py: Transient Git workspace wrapper (`TransientGitWorkspace`) used to clone, commit, and push the ephemeral override.toml checkout.
 - lerai/config.py: Shared environment parsing/validation helpers.
 - lerai/logging_utils.py: Logging redaction and safe logging helpers.
 - openai_agent/openai_agent_client.py: Azure OpenAI request construction and HTTP calls.

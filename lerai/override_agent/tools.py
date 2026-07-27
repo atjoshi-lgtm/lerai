@@ -6,12 +6,18 @@ import pathlib
 from pathlib import Path
 from typing import Any
 
+import tomlkit
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
+from lerai.git_workspace import TransientGitWorkspace
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
-from lerai.overrides_pipeline.toml_generator import build_toml_string, validate_stanza
+from lerai.overrides_pipeline.toml_generator import (
+    build_toml_string,
+    execute_ast_update,
+    validate_stanza,
+)
 from lerai.overrides_pipeline.entity_extractor import extract_intent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -417,6 +423,85 @@ def lookup_directive_schema(directive_name: str) -> str:
         return f"Failed to load directive schema: {exc}"
 
 
+def _load_conflict_rules() -> dict[str, Any]:
+    """Loads the LeROY override conflict rules JSON from the prompts directory."""
+    rules_path = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_conflict_rules.json"
+    with rules_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@tool
+def apply_override_to_workspace(
+    new_intent_json: str, target_intents_json: str, config: RunnableConfig
+) -> dict[str, Any]:
+    """
+    STEP 4 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
+    Reads the live override.toml from the workspace, nukes any target records, appends the new intent,
+    and saves the file back to disk.
+    """
+    try:
+        new_intent = json.loads(new_intent_json)
+        target_intents = json.loads(target_intents_json) if target_intents_json else []
+
+        workspace_path = config.get("configurable", {}).get("workspace_path")
+        if not workspace_path or not Path(workspace_path).is_dir():
+            raise ValueError(
+                f"Invalid or missing workspace_path: {workspace_path!r}"
+            )
+
+        toml_path = Path(workspace_path) / "override.toml"
+        if not toml_path.exists():
+            raise FileNotFoundError(
+                f"override.toml not found in workspace: {workspace_path}"
+            )
+
+        doc = tomlkit.parse(toml_path.read_text(encoding="utf-8"))
+        conflict_rules = _load_conflict_rules()
+
+        doc = execute_ast_update(doc, target_intents, new_intent, conflict_rules)
+
+        toml_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "message": "Successfully applied updates to workspace override.toml.",
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"Failed to apply overrides to disk: {exc}"}
+
+
+@tool
+def commit_and_push_workspace(
+    ticket_id: str, commit_message: str, config: RunnableConfig
+) -> dict[str, Any]:
+    """
+    STEP 5 TOOL. Use this tool ONLY after successfully applying the override to the workspace.
+    Commits the file changes and pushes them to the remote repository.
+    """
+    try:
+        workspace_path = config.get("configurable", {}).get("workspace_path")
+        if not workspace_path or not Path(workspace_path).is_dir():
+            raise ValueError(
+                f"Invalid or missing workspace_path: {workspace_path!r}"
+            )
+
+        workspace = TransientGitWorkspace(local_path=workspace_path)
+        workspace.commit(
+            user_name="LeRAI Bot",
+            user_email="lerai-bot@akamai.com",
+            ticket_id=ticket_id,
+            commit_message=commit_message,
+        )
+        workspace.push()
+
+        return {
+            "ok": True,
+            "message": "Successfully committed and pushed changes to remote repository.",
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"Failed to commit and push: {exc}"}
+
+
 SUPERVISOR_TOOLS = [
     extract_override_intent,
     detect_override_conflicts,
@@ -425,4 +510,6 @@ SUPERVISOR_TOOLS = [
     lookup_infrastructure_data,
     get_unique_infrastructure_values,
     lookup_directive_schema,
+    apply_override_to_workspace,
+    commit_and_push_workspace,
 ]

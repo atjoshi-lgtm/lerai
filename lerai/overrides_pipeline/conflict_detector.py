@@ -251,27 +251,40 @@ def get_record_directive(record: Dict) -> str:
             return key
     return ""
 
+def _normalize_directive_value(value: Any) -> Any:
+    """Normalizes directive values so scalar and array forms compare consistently."""
+    if hasattr(value, "unwrap"):
+        try:
+            value = value.unwrap()
+        except Exception:
+            pass
+
+    if isinstance(value, list):
+        return tuple(_normalize_directive_value(item) for item in value)
+
+    if isinstance(value, str):
+        return value.strip().lower()
+
+    return value
+
+
 def compare_directives(dir_1_key: str, dir_1_val: Any, dir_2_key: str, dir_2_val: Any) -> str:
     """
     Compares two override directives to determine their relationship.
-    Currently only supports 'Access-control'.
     Returns: SAME, OPPOSITE, or UNSUPPORTED.
+
+    Any matching directive key is comparable. The detector treats same-key,
+    different-value pairs as conflicting, which covers access-control and the
+    various quota directives (including object-count quota).
     """
     # If the directive keys don't match, they aren't directly competing in the same vector
     if dir_1_key != dir_2_key:
         return "UNSUPPORTED"
 
-    if dir_1_key == "Access-control":
-        # Valid values are "must-include", "must-exclude", "allowed"
-        val_1 = str(dir_1_val).strip().lower()
-        val_2 = str(dir_2_val).strip().lower()
-        
-        if val_1 == val_2:
-            return "SAME"
-        else:
-            return "OPPOSITE"
-            
-    return "UNSUPPORTED"
+    val_1 = _normalize_directive_value(dir_1_val)
+    val_2 = _normalize_directive_value(dir_2_val)
+
+    return "SAME" if val_1 == val_2 else "OPPOSITE"
 
 def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict[str, Any]]:
     """

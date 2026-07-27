@@ -102,6 +102,117 @@ def _extract_record_profile(
     return scope_key, scope_value_set, directive_key, mapname_set
 
 
+def _extract_comment_lines(node: Any) -> list[str]:
+    """Extracts comment-only lines from a TOML record while preserving order."""
+    if not hasattr(node, "as_string"):
+        return []
+
+    comment_lines: list[str] = []
+    for line in node.as_string().splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            comment_lines.append(line.rstrip())
+    return comment_lines
+
+
+def _set_leading_comments(node: Any, comment_lines: list[str]) -> None:
+    """Prepends comment lines to a TOML record's leading trivia."""
+    if not comment_lines or not hasattr(node, "trivia"):
+        return
+
+    existing_comment = getattr(node.trivia, "comment", "")
+    combined_lines = [line for line in comment_lines if line.strip()]
+    if existing_comment:
+        combined_lines.extend(
+            line.rstrip() for line in str(existing_comment).splitlines() if line.strip()
+        )
+
+    if not combined_lines:
+        return
+
+    node.trivia.comment = "\n".join(combined_lines)
+    node.trivia.comment_ws = "\n"
+
+
+def _set_trailing_comments(node: Any, comment_lines: list[str]) -> None:
+    """Appends comment lines after a TOML table body, before the next table."""
+    if not comment_lines:
+        return
+
+    combined_lines = [line for line in comment_lines if line.strip()]
+
+    if not combined_lines:
+        return
+
+    comment_block = "\n".join(combined_lines)
+
+    if hasattr(node, "add"):
+        table_value = getattr(node, "value", None)
+        body = getattr(table_value, "body", None)
+        if isinstance(body, list) and body:
+            last_entry = body[-1]
+            if isinstance(last_entry, tuple) and len(last_entry) == 2 and last_entry[0] is None:
+                raw_tail = last_entry[1]
+                tail_text = (
+                    raw_tail.as_string() if hasattr(raw_tail, "as_string") else str(raw_tail)
+                )
+                if not tail_text.strip():
+                    body.pop()
+
+        # Insert raw whitespace/comment text into the table body so comments
+        # stay above the following [[override-records]] header.
+        node.add(tomlkit.ws("\n" + comment_block + "\n"))
+        return
+
+    if hasattr(node, "trivia"):
+        existing_trail = getattr(node.trivia, "trail", "")
+        trail_prefix = str(existing_trail)
+        if trail_prefix and not trail_prefix.endswith("\n"):
+            trail_prefix += "\n"
+        node.trivia.trail = trail_prefix + comment_block
+
+
+def _transfer_deleted_record_comments(records: Any, index: int) -> None:
+    """Moves comment/whitespace body entries from a soon-to-be-deleted record.
+
+    `tomlkit` stores inter-stanza comment blocks as `key=None` body items on the
+    preceding table. If we delete that table directly, those comments vanish.
+    This helper moves those raw entries to the nearest surviving table first.
+    """
+    if index < 0 or index >= len(records):
+        return
+
+    record = records[index]
+    value = getattr(record, "value", None)
+    body = getattr(value, "body", None)
+    if not isinstance(body, list):
+        return
+
+    transferred_entries = [entry for entry in body if isinstance(entry, tuple) and len(entry) == 2 and entry[0] is None]
+    if not transferred_entries:
+        return
+
+    if index > 0:
+        previous = records[index - 1]
+        prev_value = getattr(previous, "value", None)
+        prev_body = getattr(prev_value, "body", None)
+        if isinstance(prev_body, list):
+            prev_body.extend(transferred_entries)
+            return
+
+    # Fallback: if there is no previous record (deleted first record), attach
+    # the comments to the next record's leading trivia.
+    if index + 1 < len(records):
+        next_record = records[index + 1]
+        comment_lines: list[str] = []
+        for _, item in transferred_entries:
+            text = item.as_string() if hasattr(item, "as_string") else str(item)
+            for line in str(text).splitlines():
+                if line.lstrip().startswith("#"):
+                    comment_lines.append(line.rstrip())
+        _set_leading_comments(next_record, comment_lines)
+
+
 def execute_ast_update(
     doc: tomlkit.TOMLDocument,
     target_intents: List[Dict[str, Any]],
@@ -149,7 +260,7 @@ def execute_ast_update(
             for intent in target_intents
         ]
 
-        # Iterate backwards so that ``del`` never shifts an unvisited index.
+        # Iterate backwards so index positions stay valid while deleting.
         for i in range(len(records) - 1, -1, -1):
             live_scope_key, live_scope_vals, live_dir_key, live_maps = (
                 _extract_record_profile(records[i], scope_keys, metadata_keys)
@@ -177,8 +288,9 @@ def execute_ast_update(
                         live_dir_key,
                         sorted(str(v) for v in live_maps),
                     )
+                    _transfer_deleted_record_comments(records, i)
                     del doc["override-records"][i]
-                    break  # Record nuked; advance to the next index.
+                    break
 
     # Append phase: materialize each intent as a fresh table.
     records = doc.get("override-records")

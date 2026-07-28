@@ -455,22 +455,94 @@ def apply_override_to_workspace(
                 flat[k] = v
         return flat
 
+    def _parse_payload(payload_str: str) -> list[dict[str, Any]]:
+        """
+        Robustly parses a payload string that may be JSON or TOML, with optional Markdown wrapping.
+        
+        Returns:
+            list[dict[str, Any]]: A list of parsed records.
+            
+        Raises:
+            ValueError: If the payload cannot be parsed as JSON or TOML.
+        """
+        # Handle empty or None payloads
+        if not payload_str or not payload_str.strip():
+            return []
+        
+        # Strip Markdown code block wrappers
+        cleaned = payload_str.strip()
+        lines = cleaned.split('\n')
+        
+        # Remove opening code block marker (e.g., ```json, ```toml, ```)
+        if lines and lines[0].strip().startswith('```'):
+            lines = lines[1:]
+        
+        # Remove closing code block marker
+        if lines and lines[-1].strip() == '```':
+            lines = lines[:-1]
+        
+        cleaned = '\n'.join(lines).strip()
+        
+        if not cleaned:
+            return []
+        
+        # Try parsing as JSON first
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return [parsed]
+            elif isinstance(parsed, list):
+                return parsed
+            else:
+                raise ValueError(
+                    f"Expected JSON object or array, got {type(parsed).__name__}"
+                )
+        except json.JSONDecodeError:
+            pass
+        
+        # Fall back to TOML parsing
+        try:
+            doc = tomlkit.parse(cleaned)
+            if "override-records" not in doc:
+                raise ValueError(
+                    "TOML payload missing required 'override-records' key"
+                )
+            
+            records = doc["override-records"]
+            if not isinstance(records, list):
+                raise ValueError(
+                    f"Expected 'override-records' to be an array, got {type(records).__name__}"
+                )
+            
+            # Convert tomlkit objects to standard Python dicts
+            result = []
+            for record in records:
+                if hasattr(record, 'items'):
+                    result.append(dict(record))
+                else:
+                    result.append(record)
+            return result
+        except Exception as toml_exc:
+            raise ValueError(
+                f"Failed to parse payload as JSON or TOML: {toml_exc}"
+            )
+
     try:
-        parsed_new = json.loads(new_intents_json)
-        raw_new_intents = parsed_new if isinstance(parsed_new, list) else [parsed_new]
+        raw_new_intents = _parse_payload(new_intents_json)
         
         # FIX 1: ONLY flatten the new intents so they don't write as nested TOML
         new_intents = [_flatten_intent(intent) for intent in raw_new_intents]
 
-        raw_target_intents = json.loads(target_intents_json) if target_intents_json else []
+        raw_target_intents = _parse_payload(target_intents_json)
 
-        # FIX 2: Revert to your working logic for target_intents (do not mutate them!)
+        # FIX 2: Apply _flatten_intent() to extracted items before appending
         target_intents = []
         for item in raw_target_intents:
             if isinstance(item, dict) and "record" in item:
-                target_intents.append(item["record"])
+                extracted = item["record"]
             else:
-                target_intents.append(item)
+                extracted = item
+            target_intents.append(_flatten_intent(extracted))
 
         workspace_path = config.get("configurable", {}).get("workspace_path")
         if not workspace_path or not Path(workspace_path).is_dir():

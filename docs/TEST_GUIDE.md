@@ -74,7 +74,7 @@ Debug output from the run is written to a timestamped file under `logs/test_cli/
 | `tests/test_dp_ama_state.py` | Verifies DP workflows use request-scoped data instead of global mutable state. |
 | `tests/test_config.py` | Verifies shared environment-variable parsing and validation helpers. |
 | `tests/test_logging_utils.py` | Verifies logging redaction helpers and safe command-entry logging fields. |
-| `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization in the entity extractor. |
+| `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization and ticket ID extraction in the entity extractor (including handling of multiple space-separated ticket IDs and deduplication). |
 | `tests/test_conflict_detector_object_count.py` | Verifies object-count quota intents conflict with existing matching stanzas (for example `mm3` in region `53419` against `LEROYOPS-49`). |
 | `tests/test_toml_generator_comment_preservation.py` | Verifies stanza deletion preserves comment blocks and keeps comments above the following `[[override-records]]` header instead of dropping or relocating them. |
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
@@ -519,6 +519,8 @@ Why it matters: Python logging reserves field names such as `message`. This test
 This file tests `_normalize_geographical_scope()` in `lerai/overrides_pipeline/entity_extractor.py`.
 
 These tests do not call the LLM. They validate pure normalization logic applied after tool-call argument parsing.
+
+The same module also includes `_extract_ticket_id_from_text()`, which deterministically extracts all unique ticket IDs from free-form text (e.g., `"See LEROYOPS-61 and LEROYOPS-99"` returns `"LEROYOPS-61 LEROYOPS-99"` as a space-separated string). This function deduplicates matches while preserving order, and returns `None` if no valid ticket IDs are found. The validation logic in `extract_intent()` then verifies each ticket ID individually before setting the final `Ticket-id` field.
 
 ### `test_region_geo_name_is_mapped_to_code`
 

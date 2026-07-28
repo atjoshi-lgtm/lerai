@@ -7,8 +7,7 @@
     "Ticket-id": {
       "type": "string",
       "description": "The JIRA ticket ID associated with this override request.",
-      "pattern": "^[A-Z]+-\\d+$"
-    },
+      "pattern": "^[A-Z]+-\\d+(?:\\s+[A-Z]+-\\d+)*$"    },
     "Start-time": {
       "type": "integer",
       "description": "Unix epoch timestamp for when the override takes effect."

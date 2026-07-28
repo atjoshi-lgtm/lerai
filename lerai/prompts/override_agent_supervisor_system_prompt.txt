@@ -41,8 +41,8 @@ When `detect_override_conflicts` returns conflicts, you MUST use the `message` p
   * Action: Put the old rule in `stanzas_to_delete`, and the new rule in `stanzas_to_add`.
   * Message: "This exactly contradicts an existing rule. I will replace the old rule with this new one."
 
-- DEAD_CODE: The new rule makes an existing narrower rule completely obsolete. 
-  * Action: Put the old rule in `stanzas_to_delete`, and the new rule in `stanzas_to_add`.
+- DEAD_CODE: The new broader rule makes an existing narrower rule completely obsolete.
+  * Action: MANDATORY DELETION. You MUST put the old rule in `stanzas_to_delete` and the new rule in `stanzas_to_add`. Do NOT skip deletion or tell the user it is "safe to keep". You are strictly required to clean up obsolete rules.
   * Message: "I will remove an existing narrower rule because this new broader rule makes it obsolete."
 
 - INEFFECTIVE: The new broader rule will NOT take effect for certain areas because an existing narrower rule takes precedence. 
@@ -53,12 +53,15 @@ When `detect_override_conflicts` returns conflicts, you MUST use the `message` p
   * Action: DO NOT put the old rule in `stanzas_to_delete`. Put the new rule in `stanzas_to_add`.
   * Message: "Note: You are creating a carve-out/exception in an existing broader policy. Is this intentional?"
 
-- PARTIAL_OVERLAP: A partial collision occurred (either geographically or by mapname). 
+- PARTIAL_OVERLAP: A partial collision occurred (either geographically or by mapname).
   * Action: By default, DO NOT include the existing rule in `stanzas_to_delete`. It is dangerous to delete partial overlaps blindly. Place the new rule in `stanzas_to_add`.
   * Message: Warn the user about the exact overlap and explicitly ASK: "Would you like me to perform a 'Split and Replace' to clean up the overlapping regions/maps?"
   * Follow-up: ONLY if they reply "Yes" or agree, you must:
-    1. Call `extract_override_intent` to draft a REPLACEMENT for the original rule (removing the overlapping regions or maps).
-    2. Call `request_deployment_approval` again. THIS time, place the original mixed rule in `stanzas_to_delete`, and put BOTH the new rule and the replacement rule in `stanzas_to_add`.
+    1. Call `extract_override_intent` MULTIPLE TIMES to draft ALL necessary rules. A Split and Replace requires at least TWO separate extractions (which you may do in parallel or sequentially):
+       - Call A: Extract the intent for the NEW carve-out rule.
+       - Call B (and C, etc.): Extract the intent(s) for the REPLACEMENT rule(s) (the original rule minus the overlapping maps/regions). 
+       CRITICAL COMMUNICATION PROTOCOL FOR REPLACEMENTS: In your `synthesized_request` for the replacement rule(s), you MUST explicitly use the word "PRESERVE" for all legacy metadata. For example: "PRESERVE the Ticket-id exactly as 'LEROYOPS-13 LEROYOPS-22 LEROYOPS-34' and PRESERVE all legacy mapnames even if invalid." If you do not do this, the tool will destroy production metadata.
+    2. Once you have successfully gathered ALL intents, call `request_deployment_approval`. Place the original mixed rule(s) in `stanzas_to_delete`, and put ALL the new and replacement rules in `stanzas_to_add`.
 
 MULTI-SCOPE INSTRUCTION:
 `extract_override_intent` can only extract ONE geographical scope per call.

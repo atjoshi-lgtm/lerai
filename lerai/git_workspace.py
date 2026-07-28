@@ -151,25 +151,34 @@ def run_test():
     try:
         print("🚀 Initializing transient workspace (acquiring lock & cloning)...")
         workspace = TransientGitWorkspace()
-        workspace.clone()
+        local_path = workspace.clone()
         
-        print("✅ Clone successful. Writing a test file...")
-        # Write a dummy file to simulate an override change
-        test_file_path = os.path.join(os.environ["LEROY_GIT_LOCAL_PATH"], "test_override.txt")
-        with open(test_file_path, "w") as f:
-            f.write(f"Test run: {uuid.uuid4()}\n")
+        print("✅ Clone successful. Copying override.toml...")
+        # Copy override.toml from /lerai/override.toml
+        source_override = Path("/home/atjoshi/lerai/override.toml")
+        target_override = local_path / "override.toml"
+        
+        if source_override.exists():
+            shutil.copy2(source_override, target_override)
+            print(f"✅ Copied override.toml")
+        else:
+            print(f"❌ Source file not found: {source_override}")
+            return
             
         print("📝 Committing changes...")
         workspace.commit(
             user_name="Test User",
             user_email="test.user@akamai.com",
             ticket_id="LEROYOPS-999",
-            commit_message="Automated integration test for Git module"
+            commit_message="Reset override.toml"
         )
         
         print("☁️ Pushing to remote...")
         workspace.push()
-        print("🎉 Success! Check your remote repository.")
+        
+        print("🧹 Cleaning up local repo...")
+        shutil.rmtree(local_path)
+        print("🎉 Success! Override.toml reset in remote repository.")
 
     except GitLockError:
         print("❌ Failed to acquire lock. Is another process running?")
@@ -177,5 +186,5 @@ def run_test():
         print(f"❌ An error occurred: {e}")
 
 if __name__ == "__main__":
-    # run_test()
-    pass
+    run_test()
+    # pass

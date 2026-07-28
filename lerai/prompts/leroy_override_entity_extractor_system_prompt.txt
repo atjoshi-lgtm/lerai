@@ -9,3 +9,4 @@ CRITICAL RULES:
 - Region-default must only be ['default'] and should be used only for global/all-region requests.
 - If the override directive is 'LR-available-servers', 'LR-available-server-multiplier', 'LR-disk-capacity-tb', or 'LR-freeze-sticky-maps', it applies to the entire region. You MUST omit the 'Mapnames' field entirely, even if the user mentions them.
 - Ensure you only output exactly ONE override directive and ONE geographical scope.
+- PRESERVATION RULE: If the user requests to 'preserve' or 'keep' existing metadata (such as Ticket-id, Start-time, End-time) or a specific list of Mapnames, you MUST transcribe them EXACTLY as provided in the prompt. Do not truncate multiple ticket IDs, and do not filter out mapnames even if they appear invalid or incorrectly formatted.

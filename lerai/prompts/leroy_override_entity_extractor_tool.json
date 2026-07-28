@@ -6,7 +6,7 @@
     "properties": {
       "Ticket-id": {
         "type": "string",
-        "description": "Optional Jira ticket ID (e.g., LEROYOPS-61)."
+        "description": "Optional Jira ticket ID(s). This can be a single ticket (e.g., LEROYOPS-61) or a space-separated string of multiple tickets (e.g., 'LEROYOPS-13 LEROYOPS-22 LEROYOPS-34'). MUST be extracted exactly as provided without truncation."
       },
       "Mapnames": {
         "type": "array",

@@ -378,8 +378,9 @@ def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict
             message = f"Dead code: Your new broader rule makes the narrower existing rule in {rec_ticket} obsolete."
             
         if partial_map_overlap and conflict_type:
-            conflict_type = "PARTIAL_OVERLAP"
             message += f" Note: This only applies to the overlapping maps: {list(intersection)}."
+            if conflict_type in {"DIRECT_COLLISION", "DEAD_CODE"}:
+                conflict_type = "PARTIAL_OVERLAP"
 
         if conflict_type:
             found_conflicts.append({

@@ -69,7 +69,7 @@ def _print_new_messages(result: dict[str, Any], seen_messages: set[str]) -> None
 
             if rendered.strip():
                 logger.info("[Assistant] %s", rendered)
-                print(f"\n🤖 Assistant:\n{rendered}\n")
+                print(f"\n### 🤖 Assistant:\n{rendered}\n")
 
         # 2. Handle Tool Results (Optional, but great for debugging)
         elif msg_type == "tool":
@@ -89,11 +89,11 @@ def _print_interrupts(graph, config, result) -> bool:
             if getattr(task, "interrupts", None):
                 for intr in task.interrupts:
                     diff_payload = getattr(intr, "value", str(intr))
-                    print("\n" + "=" * 50)
+                    print("\n")
                     print("⚠️  ACTION REQUIRED: APPROVAL REQUEST")
-                    print("=" * 50)
+                    # print("=" * 50)
                     print(diff_payload)
-                    print("=" * 50 + "\n")
+                    print("\n")
                 return True
 
     # Fallback check on result if state tasks aren't populated
@@ -141,7 +141,7 @@ def main() -> int:
     try:
         while True:
             try:
-                user_text = input("\n👤 You: ").strip()
+                user_text = input("\n### 👤 You: ").strip()
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting.")
                 return 0

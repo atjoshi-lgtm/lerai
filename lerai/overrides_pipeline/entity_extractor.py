@@ -125,11 +125,17 @@ def parse_jira_xml(xml_string: str) -> dict:
 
 
 def _extract_ticket_id_from_text(text: str) -> Optional[str]:
-    """Extracts a JIRA-style ticket id (e.g. LEROYOPS-61) from free-form text."""
+    """Extracts JIRA-style ticket ids (e.g. LEROYOPS-61) from free-form text.
+    
+    Returns all unique matches as a space-separated string, or None if no matches found.
+    """
     if not text:
         return None
-    match = re.search(r"\b([A-Z]+-\d+)\b", text)
-    return match.group(1) if match else None
+    matches = re.findall(r"\b([A-Z]+-\d+)\b", text)
+    if matches:
+        unique_matches = list(dict.fromkeys(matches))  # Deduplicate while preserving order
+        return " ".join(unique_matches)
+    return None
 
 
 def _normalize_region_geo_code(value: str) -> Optional[str]:
@@ -292,7 +298,7 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
                 }
             ),
         )
-        if final_ticket_id and re.fullmatch(r"[A-Z]+-\d+", final_ticket_id):
+        if final_ticket_id and all(re.fullmatch(r"[A-Z]+-\d+", t) for t in final_ticket_id.split()):
             extracted_data["Ticket-id"] = final_ticket_id
         else:
             extracted_data.pop("Ticket-id", None)

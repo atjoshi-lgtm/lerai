@@ -67,7 +67,7 @@ def extract_override_intent(synthesized_request: str) -> str:
 @tool
 def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[str, Any]:
     """
-    STEP 2 TOOL. Pass the JSON string output from extract_override_intent here.
+    STEP 3 TOOL. Pass the JSON string output from extract_override_intent here.
     Reads override.toml and detects if this new intent conflicts with live records.
     """
     try:
@@ -137,9 +137,9 @@ def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[
 @tool
 def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:
     """
-    STEP 3 TOOL. Pass the JSON string output from extract_override_intent here.
+    STEP 2 TOOL. Pass the JSON string output from extract_override_intent here.
     Generates the final TOML code and validates it against the schema.
-    Use this only after resolving any conflicts.
+    Run this before conflict detection so the full draft is available at approval time.
     """
     try:
         intent = json.loads(intent_json)
@@ -172,21 +172,11 @@ def search_leroy_documentation(query: str) -> str:
 
 @tool
 def lookup_infrastructure_data(target_output: str, source_value: str) -> str:
-    """Use this tool to look up infrastructure mappings. It automatically handles normalization (spaces to underscores), aliases (airport codes), and hierarchical joins.
-    - target_output: What you want to find (must be one of: 'regions', 'metros', 'countries').
-    - source_value: The known entity you are searching with (e.g., 'France', 'FR', 'LAX', 'New York', 'EMEA').
-    The tool will automatically figure out if the source is a geo, country, airport code, or metro, and traverse the hierarchy to return the target."""
+    """Use this tool to look up infrastructure mappings via a flat in-memory table.
+    - target_output: What you want to find (must be one of: 'geos', 'countries', 'metros', 'regions').
+    - source_value: One or more known entities, comma-separated (e.g., 'France, FR, LAX')."""
     def normalize(s: str) -> str:
         return (s or "").strip().lower().replace(" ", "_")
-
-    def unique(values: list[str]) -> list[str]:
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for value in values:
-            if value and value not in seen:
-                seen.add(value)
-                ordered.append(value)
-        return ordered
 
     def load_csv_rows(file_name: str) -> list[dict[str, str]]:
         csv_path = DATA_DIR / file_name
@@ -194,12 +184,8 @@ def lookup_infrastructure_data(target_output: str, source_value: str) -> str:
             return list(csv.DictReader(f))
 
     kind = normalize(target_output)
-    source_norm = normalize(source_value)
-
-    if kind not in {"regions", "metros", "countries"}:
-        return "Invalid target_output. Use one of: regions, metros, countries."
-    if not source_norm:
-        return "Please provide a non-empty source_value to search."
+    if kind not in {"geos", "countries", "metros", "regions"}:
+        return "Invalid target_output. Use one of: geos, countries, metros, regions."
 
     # Lightweight country aliases for common natural-language inputs.
     country_aliases = {
@@ -221,136 +207,104 @@ def lookup_infrastructure_data(target_output: str, source_value: str) -> str:
         "brazil": "br",
     }
 
+    source_items = [(part or "").strip() for part in (source_value or "").split(",")]
+    valid_source_items = [item for item in source_items if item]
+    if not valid_source_items:
+        return "Please provide a non-empty source_value to search."
+
     try:
         geo_country_rows = load_csv_rows("geo_country.csv")
         country_metro_rows = load_csv_rows("country_metro.csv")
         metro_region_rows = load_csv_rows("metro_region.csv")
 
-        geo_matches = [
-            (row.get("country") or "").strip().upper()
-            for row in geo_country_rows
-            if normalize(row.get("geo") or "") == source_norm
-        ]
-        countries_from_geo = unique(geo_matches)
-
-        if countries_from_geo:
-            if kind == "countries":
-                return f"Found countries for {source_value}: {', '.join(countries_from_geo)}"
-
-            country_norm_set = {normalize(code) for code in countries_from_geo}
-            metros_from_geo = unique(
-                [
-                    normalize((row.get("metro_area") or "").strip())
-                    for row in country_metro_rows
-                    if normalize((row.get("country") or "").strip()) in country_norm_set
-                ]
-            )
-
-            if kind == "metros":
-                if metros_from_geo:
-                    return f"Found metros in {source_value}: {', '.join(metros_from_geo)}"
-                return f"No metros found in {source_value}."
-
-            metro_norm_set = set(metros_from_geo)
-            regions_from_geo = unique(
-                [
-                    (row.get("region") or "").strip()
-                    for row in metro_region_rows
-                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
-                ]
-            )
-            if regions_from_geo:
-                return f"Found regions for {source_value}: {', '.join(regions_from_geo)}"
-            return f"No regions found for {source_value}."
-
-        country_codes_from_data = {
-            normalize((row.get("country") or "").strip()): (row.get("country") or "").strip().upper()
-            for row in country_metro_rows
-            if (row.get("country") or "").strip()
-        }
+        geos_by_country: dict[str, list[str]] = {}
         for row in geo_country_rows:
-            country_code = (row.get("country") or "").strip()
-            if country_code:
-                country_codes_from_data[normalize(country_code)] = country_code.upper()
+            country = (row.get("country") or "").strip()
+            geo = (row.get("geo") or "").strip()
+            if not country:
+                continue
+            geos_by_country.setdefault(country, [])
+            if geo and geo not in geos_by_country[country]:
+                geos_by_country[country].append(geo)
 
-        resolved_country_code = country_codes_from_data.get(source_norm)
-        if not resolved_country_code:
-            alias_code = country_aliases.get(source_norm)
-            if alias_code:
-                resolved_country_code = country_codes_from_data.get(alias_code, alias_code.upper())
+        metros_by_country: dict[str, list[dict[str, str]]] = {}
+        for row in country_metro_rows:
+            country = (row.get("country") or "").strip()
+            if not country:
+                continue
+            metro_entry = {
+                "metro_area": (row.get("metro_area") or "").strip(),
+                "airport_code": (row.get("airport_code") or "").strip(),
+            }
+            metros_by_country.setdefault(country, []).append(metro_entry)
 
-        if resolved_country_code:
-            if kind == "countries":
-                return f"Found countries for {source_value}: {resolved_country_code}"
+        regions_by_metro: dict[str, list[str]] = {}
+        for row in metro_region_rows:
+            metro = (row.get("metro_area") or row.get("metro") or "").strip()
+            region = (row.get("region") or "").strip()
+            if not metro:
+                continue
+            regions_by_metro.setdefault(metro, [])
+            if region and region not in regions_by_metro[metro]:
+                regions_by_metro[metro].append(region)
 
-            metros_from_country = unique(
-                [
-                    normalize((row.get("metro_area") or "").strip())
-                    for row in country_metro_rows
-                    if normalize((row.get("country") or "").strip()) == normalize(resolved_country_code)
-                ]
-            )
+        all_countries = set(geos_by_country.keys()) | set(metros_by_country.keys())
 
-            if kind == "metros":
-                if metros_from_country:
-                    return f"Found metros in {source_value}: {', '.join(metros_from_country)}"
-                return f"No metros found in {source_value}."
+        flat_table: list[dict[str, str]] = []
+        for country in all_countries:
+            country_geos = geos_by_country.get(country, [""]) or [""]
+            country_metros = metros_by_country.get(country, [{"metro_area": "", "airport_code": ""}])
 
-            metro_norm_set = set(metros_from_country)
-            regions_from_country = unique(
-                [
-                    (row.get("region") or "").strip()
-                    for row in metro_region_rows
-                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
-                ]
-            )
-            if regions_from_country:
-                return f"Found regions for {source_value}: {', '.join(regions_from_country)}"
-            return f"No regions found for {source_value}."
+            for geo in country_geos:
+                for metro_entry in country_metros:
+                    metro_area = metro_entry.get("metro_area", "")
+                    airport_code = metro_entry.get("airport_code", "")
+                    metro_regions = regions_by_metro.get(metro_area, [""]) if metro_area else [""]
 
-        metro_or_airport_matches = [
-            row
-            for row in country_metro_rows
-            if normalize((row.get("metro_area") or "").strip()) == source_norm
-            or normalize((row.get("airport_code") or "").strip()) == source_norm
-        ]
+                    for region in metro_regions:
+                        flat_table.append(
+                            {
+                                "geo": geo,
+                                "country": country,
+                                "metro_area": metro_area,
+                                "airport_code": airport_code,
+                                "region": region,
+                            }
+                        )
 
-        if metro_or_airport_matches:
-            canonical_metros = unique(
-                [normalize((row.get("metro_area") or "").strip()) for row in metro_or_airport_matches]
-            )
-            countries_from_metro = unique(
-                [
-                    (row.get("country") or "").strip().upper()
-                    for row in metro_or_airport_matches
-                    if (row.get("country") or "").strip()
-                ]
-            )
+        target_column = {
+            "geos": "geo",
+            "countries": "country",
+            "metros": "metro_area",
+            "regions": "region",
+        }[kind]
 
-            if kind == "countries":
-                if countries_from_metro:
-                    return f"Found countries for {source_value}: {', '.join(countries_from_metro)}"
-                return f"No countries found for {source_value}."
+        formatted_results: list[str] = []
+        for raw_item in valid_source_items:
+            normalized_item = normalize(raw_item)
+            resolved_item = country_aliases.get(normalized_item, normalized_item)
 
-            if kind == "metros":
-                return f"Found metros in {source_value}: {', '.join(canonical_metros)}"
+            item_results: set[str] = set()
+            for row in flat_table:
+                searchable_values = {
+                    normalize(row.get("geo", "")),
+                    normalize(row.get("country", "")),
+                    normalize(row.get("metro_area", "")),
+                    normalize(row.get("airport_code", "")),
+                    normalize(row.get("region", "")),
+                }
+                if resolved_item in searchable_values:
+                    target_value = (row.get(target_column) or "").strip()
+                    if target_value:
+                        item_results.add(target_value)
 
-            metro_norm_set = set(canonical_metros)
-            regions_from_metro = unique(
-                [
-                    (row.get("region") or "").strip()
-                    for row in metro_region_rows
-                    if normalize((row.get("metro") or row.get("metro_area") or "").strip()) in metro_norm_set
-                ]
-            )
-            if regions_from_metro:
-                return f"Found regions for {source_value}: {', '.join(regions_from_metro)}"
-            return f"No regions found for {source_value}."
+            if item_results:
+                sorted_results = sorted(item_results)
+                formatted_results.append(f"{raw_item} -> {', '.join(sorted_results)}")
+            else:
+                formatted_results.append(f"{raw_item} -> No mapping found")
 
-        return (
-            f"No infrastructure mapping found for {source_value}. "
-            "Try a geo (e.g., EMEA), country code/name (e.g., FR, France), airport code (e.g., LAX), or metro name (e.g., New York)."
-        )
+        return "\n".join(formatted_results)
 
     except Exception as exc:
         return f"Infrastructure lookup is currently unavailable: {exc}"
@@ -436,7 +390,7 @@ def apply_override_to_workspace(
     new_intents_json: str, target_intents_json: str, config: RunnableConfig
 ) -> dict[str, Any]:
     """
-    STEP 4 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
+    STEP 6 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
     Reads the live override.toml from the workspace, nukes any target records, appends one or more
     new intents, and saves the file back to disk.
 
@@ -576,7 +530,7 @@ def commit_and_push_workspace(
     ticket_id: str, commit_message: str, config: RunnableConfig
 ) -> dict[str, Any]:
     """
-    STEP 5 TOOL. Use this tool ONLY after successfully applying the override to the workspace.
+    STEP 7 TOOL. Use this tool ONLY after successfully applying the override to the workspace.
     Commits the file changes and pushes them to the remote repository.
     """
     try:

@@ -482,13 +482,11 @@ def build_toml_string(intent: Dict[str, Any]) -> str:
         
     # 2. Add Geographical Scope
     geo_dict = intent.get("Geographical-Scope", {})
-    logger.info("Geographical scope object:\n%s", _as_json(geo_dict))
     for key, value in geo_dict.items():
         record[key] = value
         
     # 3. Add Override Directive
     dir_dict = intent.get("Override-Directive", {})
-    logger.info("Override directive object:\n%s", _as_json(dir_dict))
     for key, value in dir_dict.items():
         record[key] = value
         
@@ -496,7 +494,7 @@ def build_toml_string(intent: Dict[str, Any]) -> str:
     doc.append("override-records", aot)
 
     toml_output = tomlkit.dumps(doc)
-    logger.info("Built TOML record object:\n%s", _as_json(record))
+    logger.info("Generated TOML:\n%s", toml_output)
     return toml_output
 
 def validate_stanza(toml_string: str, schema_dict: Dict[str, Any]) -> bool:
@@ -513,13 +511,9 @@ def validate_stanza(toml_string: str, schema_dict: Dict[str, Any]) -> bool:
         # Convert tomlkit internal objects to native Python dict for jsonschema
         record = records[0]
         clean_record = json.loads(json.dumps(record))
-        logger.info(
-            "Prepared record for schema validation:\n%s",
-            _as_json(clean_record),
-        )
         
         jsonschema.validate(instance=clean_record, schema=schema_dict)
-        logger.info("Schema validation passed for record:\n%s", _as_json(clean_record))
+        logger.debug("Schema validation passed")
         return True
         
     except jsonschema.exceptions.ValidationError as e:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -24,15 +25,30 @@ try:
 except ModuleNotFoundError:
     from lerai.git_workspace import TransientGitWorkspace
 
-os.makedirs("logs/test_cli", exist_ok=True)
-_log_filename = os.path.join("logs/test_cli", f"override_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+try:
+    from override_agent.nodes import _decode_nested_json
+except ModuleNotFoundError:
+    from lerai.override_agent.nodes import _decode_nested_json
 
-logging.basicConfig(
-    filename=_log_filename,
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+os.makedirs("logs/test_cli", exist_ok=True)
+_log_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+_info_log  = os.path.join("logs/test_cli", f"override_agent_{_log_ts}.log")
+_debug_log = os.path.join("logs/test_cli", f"override_agent_{_log_ts}.debug.log")
+
+_fmt = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+_info_handler = logging.FileHandler(_info_log)
+_info_handler.setLevel(logging.INFO)
+_info_handler.setFormatter(_fmt)
+_debug_handler = logging.FileHandler(_debug_log)
+_debug_handler.setLevel(logging.DEBUG)
+_debug_handler.setFormatter(_fmt)
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.DEBUG)
+_root_logger.addHandler(_info_handler)
+_root_logger.addHandler(_debug_handler)
 # Suppress verbose third-party debug output that produces unreadable single-line dumps
 for _noisy_logger in ("httpx", "httpcore", "openai", "openai._base_client"):
     logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
@@ -57,7 +73,8 @@ def _print_new_messages(result: dict[str, Any], seen_messages: set[str]) -> None
             # Log any tool calls the AI decided to make
             tool_calls = getattr(msg, "tool_calls", [])
             for tc in tool_calls:
-                logger.info("[Tool Called: %s] Arguments: %s", tc.get("name"), tc.get("args"))
+                _args_pretty = json.dumps(_decode_nested_json(tc.get("args")), ensure_ascii=False, indent=2)
+                logger.info("[Tool Called: %s] Arguments:\n%s", tc.get("name"), _args_pretty)
 
             # Print standard AI conversational text
             content = getattr(msg, "content", "")
@@ -71,12 +88,21 @@ def _print_new_messages(result: dict[str, Any], seen_messages: set[str]) -> None
                 logger.info("[Assistant] %s", rendered)
                 print(f"\n### 🤖 Assistant:\n{rendered}\n")
 
-        # 2. Handle Tool Results (Optional, but great for debugging)
+        # 2. Handle Tool Results
         elif msg_type == "tool":
-            content = getattr(msg, "content", "")
-            # Truncate long tool outputs so it doesn't flood the log
-            truncated = str(content)[:300] + ("..." if len(str(content)) > 300 else "")
-            logger.debug("[Tool Result (%s)] %s", getattr(msg, "name", "unknown"), truncated)
+            content = str(getattr(msg, "content", ""))
+            tool_name = getattr(msg, "name", "unknown")
+            stripped = content.strip()
+            if stripped.startswith(("{" , "[")):
+                try:
+                    content = json.dumps(json.loads(stripped), ensure_ascii=False, indent=2)
+                except json.JSONDecodeError:
+                    pass
+            # interrupt results for request_deployment_approval are the user's plain-text resume reply
+            if tool_name == "request_deployment_approval" and not stripped.startswith(("{" , "[")):
+                logger.info("[Interrupt Response \u2192 %s]\n%s", tool_name, content)
+            else:
+                logger.info("[Tool Result: %s]\n%s", tool_name, content)
 
 
 def _print_interrupts(graph, config, result) -> bool:
@@ -155,8 +181,10 @@ def main() -> int:
 
             try:
                 if is_interrupted:
+                    logger.info("[User Resume] %s", user_text)
                     result = graph.invoke(Command(resume=user_text), config=config)
                 else:
+                    logger.info("[User Input] %s", user_text)
                     result = graph.invoke({"messages": [HumanMessage(content=user_text)]}, config=config)
 
                 _print_new_messages(result, seen_messages)

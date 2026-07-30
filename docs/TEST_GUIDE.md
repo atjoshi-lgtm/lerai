@@ -62,7 +62,14 @@ What to verify manually:
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
 
-Debug output from the run is written to a timestamped file under `logs/test_cli/`, for example `logs/test_cli/override_agent_YYYYMMDD_HHMMSS.log`. Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so only application-level messages appear in the log. The supervisor also logs pretty-printed LLM request and response payloads there for debugging. The CLI automatically creates a unique ephemeral workspace per session and cleans it up when the session ends (including on error).
+Each session writes **two simultaneous log files** under `logs/test_cli/`, sharing the same timestamp:
+
+- `override_agent_YYYYMMDD_HHMMSS.log` — **INFO and above.** The primary readable log. Shows the complete flow of a session: user inputs and resumes, supervisor routing decisions, LLM token/latency summary per call, tool calls (with full pretty-printed arguments), tool results (with full pretty-printed output), pipeline steps (extractor query and extracted intent, generated TOML), and final assistant responses.
+- `override_agent_YYYYMMDD_HHMMSS.debug.log` — **DEBUG and above.** Same as the INFO log plus: slim LLM request payloads (last 3 non-system messages, system prompt shown as char count only), slim LLM response payloads (tool calls, tokens, latency, finish reason — no content-filter or logprob fields), extractor LLM token/latency line, resolved ticket ID candidates, and normalized extraction payload.
+
+Every log line includes the emitting module name (e.g. `lerai.override_agent.nodes`, `lerai.overrides_pipeline.entity_extractor`), which makes it easy to trace which component produced each entry.
+
+Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so they do not appear in either log file. The CLI automatically creates a unique ephemeral workspace per session and cleans it up when the session ends (including on error).
 
 ## Test Files at a Glance
 

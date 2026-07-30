@@ -227,7 +227,10 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
     
     # 1. Parse XML if provided
     ticket_data = parse_jira_xml(xml_string) if xml_string else {}
-    logger.info("Parsed Jira ticket data:\n%s", _as_json(ticket_data))
+    if ticket_data:
+        logger.info("Parsed Jira ticket data:\n%s", _as_json(ticket_data))
+    else:
+        logger.debug("No Jira ticket context")
     
     # 2. Build the messages payload using externalized prompt templates
     system_prompt = _load_prompt(EXTRACTOR_SYSTEM_PROMPT_FILE)
@@ -239,15 +242,9 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
     ]
 
     logger.info(
-        "Prepared extractor request metadata:\n%s",
-        _as_json(
-            {
-                "message_count": len(messages),
-                "message_roles": [m.get("role") for m in messages],
-                "has_ticket_context": bool(ticket_data),
-                "user_query": user_text,
-            }
-        ),
+        "Extractor query: has_ticket_context=%s user_query=%r",
+        bool(ticket_data),
+        user_text,
     )
     
     # 3. Call the Azure OpenAI client
@@ -266,11 +263,18 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
                 "function": {"name": extractor_tool_name},
             }
         )
-        logger.info("Received extractor response:\n%s", _as_json(r))
-        
+        _usage = r.get("usage", {}) or {}
+        _latency_ms = (_usage.get("latency_checkpoint") or {}).get("total_duration_ms")
+        logger.debug(
+            "[Extractor LLM] tokens=in:%s/out:%s | latency_ms=%s | finish=%s",
+            _usage.get("prompt_tokens"),
+            _usage.get("completion_tokens"),
+            _latency_ms,
+            (r.get("choices") or [{}])[0].get("finish_reason"),
+        )
+
         # 4. Extract and validate the tool call arguments
         tool_calls = r["choices"][0]["message"].get("tool_calls")
-        logger.info("Parsed tool calls:\n%s", _as_json(tool_calls))
         if not tool_calls:
             raise ValueError("LLM failed to return a structured tool call.")
             
@@ -287,7 +291,7 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
             llm_ticket_id = ""
 
         final_ticket_id = user_ticket_id or jira_ticket_id or llm_ticket_id
-        logger.info(
+        logger.debug(
             "Resolved ticket id candidates:\n%s",
             _as_json(
                 {
@@ -306,12 +310,8 @@ def extract_intent(user_text: str, xml_string: Optional[str] = None) -> Dict[str
         # --- Deterministic Normalization ---
         geo_scope = extracted_data.get("Geographical-Scope", {})
         extracted_data["Geographical-Scope"] = _normalize_geographical_scope(geo_scope)
-        logger.info("Normalized extraction payload:\n%s", _as_json(extracted_data))
+        logger.debug("Normalized extraction payload:\n%s", _as_json(extracted_data))
         is_valid, validation_msg = validate_extraction(extracted_data)
-        logger.info(
-            "Extraction validation result:\n%s",
-            _as_json({"is_valid": is_valid, "validation_msg": validation_msg}),
-        )
         if not is_valid:
             raise ValueError(f"Extracted data is invalid: {validation_msg}\nData: {extracted_data}")
             

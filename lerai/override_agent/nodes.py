@@ -66,6 +66,29 @@ def _serialize_message(message: Any) -> dict[str, Any]:
     return payload
 
 
+def _serialize_response_slim(message: Any) -> dict[str, Any]:
+    """Compact response payload: drops content-filter, logprobs, and other Azure noise."""
+    payload: dict[str, Any] = {
+        "type": getattr(message, "type", ""),
+        "content": getattr(message, "content", ""),
+    }
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        payload["tool_calls"] = tool_calls
+
+    meta = getattr(message, "response_metadata", {}) or {}
+    usage = meta.get("token_usage", {}) or {}
+    latency = (usage.get("latency_checkpoint") or {}).get("total_duration_ms")
+    payload["finish_reason"] = meta.get("finish_reason")
+    payload["tokens"] = {
+        "prompt": usage.get("prompt_tokens"),
+        "completion": usage.get("completion_tokens"),
+        "cached": (usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+    }
+    payload["latency_ms"] = latency
+    return payload
+
+
 def _decode_nested_json(value: Any, max_depth: int = 5) -> Any:
     """Recursively decode JSON-looking strings into structured objects for logging."""
     if max_depth <= 0:
@@ -100,16 +123,21 @@ def _pretty_payload(value: Any) -> str:
 
 
 def _log_llm_request(messages: list[Any]) -> None:
+    # log sys_prompt_chars to track context size without repeating static content
+    sys_chars = len(getattr(messages[0], "content", "")) if messages else 0
+    recent = messages[1:][-3:]
     logger.debug(
-        "[LLM Request Payload] %s",
-        _pretty_payload([_serialize_message(message) for message in messages]),
+        "[LLM Request] context_messages=%d sys_prompt_chars=%d recent=%s",
+        len(messages),
+        sys_chars,
+        _pretty_payload([_serialize_message(m) for m in recent]),
     )
 
 
 def _log_llm_response(message: Any) -> None:
     logger.debug(
         "[LLM Response Payload] %s",
-        _pretty_payload(_serialize_message(message)),
+        _pretty_payload(_serialize_response_slim(message)),
     )
 
 
@@ -263,16 +291,31 @@ def supervisor_node(state: OverrideAgentState) -> OverrideAgentState:
     response = llm.invoke(request_messages)
     _log_llm_response(response)
 
+    _meta = getattr(response, "response_metadata", {}) or {}
+    _usage = _meta.get("token_usage", {}) or {}
+    _latency_ms = (_usage.get("latency_checkpoint") or {}).get("total_duration_ms")
+    logger.info(
+        "[LLM] tokens=in:%s/out:%s/total:%s cached:%s | latency_ms=%s | finish=%s",
+        _usage.get("prompt_tokens"),
+        _usage.get("completion_tokens"),
+        _usage.get("total_tokens"),
+        (_usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+        _latency_ms,
+        _meta.get("finish_reason"),
+    )
+
     updates: OverrideAgentState = {"messages": [response]}
 
     combined_messages = [*prior_messages, response]
     latest_conflict = _extract_latest_conflict_report(combined_messages)
     if latest_conflict:
         updates["conflict_report"] = latest_conflict
+        logger.info("[Supervisor] conflict_report updated in state")
 
     latest_draft = _extract_latest_draft(combined_messages)
     if latest_draft:
         updates["draft_toml"] = latest_draft
+        logger.info("[Supervisor] draft_toml updated in state (len=%d chars)", len(latest_draft))
 
     return updates
 
@@ -285,8 +328,11 @@ def should_continue(state: OverrideAgentState) -> str:
 
     last_message = messages[-1]
     if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
+        tool_names = [tc["name"] for tc in last_message.tool_calls]
+        logger.info("[Supervisor] Routing → tools %s", tool_names)
         return "tools"
 
+    logger.info("[Supervisor] No tool calls — ending turn")
     return "end"
 
 

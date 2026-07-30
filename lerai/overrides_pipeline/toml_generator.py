@@ -19,16 +19,16 @@ def _as_json(value: Any) -> str:
 def _normalize_scalar(value: Any) -> Any:
     """Coerces a single (possibly ``tomlkit``) scalar into a comparable Python value.
 
-    String-like values are stripped and lower-cased so that hidden ``tomlkit``
-    formatting artifacts (surrounding whitespace, casing) never cause a false
-    negative during set comparison. Non-string scalars are unwrapped to their
-    native Python representation and returned untouched.
+    Values are cast to strings, stripped, and lower-cased so that hidden
+    ``tomlkit`` formatting artifacts (surrounding whitespace, casing) and
+    cross-type values (e.g., int vs str IDs) never cause false negatives
+    during set comparison.
 
     Args:
         value: A raw Python scalar or a ``tomlkit`` item wrapping one.
 
     Returns:
-        A hashable, comparison-safe Python value.
+        A hashable, comparison-safe normalized string.
     """
     # ``tomlkit`` items subclass their native Python counterparts, but call
     # ``unwrap()`` when available to guarantee we operate on raw values.
@@ -37,9 +37,7 @@ def _normalize_scalar(value: Any) -> Any:
             value = value.unwrap()
         except Exception:
             pass
-    if isinstance(value, str):
-        return value.strip().lower()
-    return value
+    return str(value).strip().lower()
 
 
 def _to_comparison_set(values: Any) -> frozenset:

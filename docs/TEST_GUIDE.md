@@ -9,7 +9,7 @@ The tests are intentionally designed to run without a Webex bot server, MySQL da
 Run the full no-server suite from the repository root:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation tests.test_toml_generator
 ```
 
 Run the compile check:
@@ -27,7 +27,7 @@ python3 -m unittest tests.test_promote_security
 Run the focused override-pipeline regression bundle:
 
 ```bash
-python3 -m unittest tests.test_toml_generator_comment_preservation tests.test_entity_extractor_normalization tests.test_conflict_detector_object_count
+python3 -m unittest tests.test_toml_generator_comment_preservation tests.test_toml_generator tests.test_entity_extractor_normalization tests.test_conflict_detector_object_count
 ```
 
 The local environment uses `python3`; `python` may not be available on the PATH.
@@ -84,6 +84,7 @@ Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `W
 | `tests/test_entity_extractor_normalization.py` | Verifies geographical scope normalization and ticket ID extraction in the entity extractor (including handling of multiple space-separated ticket IDs and deduplication). |
 | `tests/test_conflict_detector_object_count.py` | Verifies object-count quota intents conflict with existing matching stanzas (for example `mm3` in region `53419` against `LEROYOPS-49`). |
 | `tests/test_toml_generator_comment_preservation.py` | Verifies stanza deletion preserves comment blocks and keeps comments above the following `[[override-records]]` header instead of dropping or relocating them. |
+| `tests/test_toml_generator.py` | Verifies `execute_ast_update` deletion matching normalizes scalar types and formatting (for example integer `Region-number` values and padded/cased `Mapnames`) so exact-match deletion works across JSON-vs-TOML type differences. |
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
 | `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
 | `tests/test_mapname_validation.py` | Verifies map-name validation against `lerai/data/maps.csv` and warning payload fields returned by `detect_override_conflicts`. |

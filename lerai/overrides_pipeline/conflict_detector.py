@@ -49,7 +49,7 @@ class GeographicalTaxonomy:
                     reader = csv.DictReader(f)
                     for row in reader:
                         # Ensure we map string-to-string for easy comparisons
-                        self.region_to_metro[str(row["region"]).strip()] = str(row["metro_area"]).strip()
+                        self.region_to_metro[str(row["region"]).strip()] = str(row["metro_area"]).strip().replace(" ", "_")
 
             # 2. Load Region-metro -> Region-country
             country_metro_path = self.data_dir / "country_metro.csv"
@@ -60,7 +60,6 @@ class GeographicalTaxonomy:
                         # Entity extractor converts metro spaces to underscores, so we do it here too
                         metro_normalized = str(row["metro_area"]).strip().replace(" ", "_")
                         
-                        # BUG FIX: This was incorrectly assigned to self.country_to_geo
                         self.metro_to_country[metro_normalized] = str(row["country"]).strip()
 
             # 3. Load Region-country -> Region-geo
@@ -103,7 +102,7 @@ class GeographicalTaxonomy:
         """
         Determines the hierarchical relationship between two scopes.
         Returns: EXACT_MATCH, SCOPE_1_IS_BROADER, SCOPE_1_IS_NARROWER,
-        SCOPE_1_IS_BROADER_PARTIAL, SCOPE_1_IS_NARROWER_PARTIAL, or NO_OVERLAP.
+        SCOPE_1_IS_BROADER_PARTIAL, SCOPE_1_IS_NARROWER_PARTIAL, SAME_LEVEL_PARTIAL, or NO_OVERLAP.
         """
         lvl1 = self.HIERARCHY.get(scope_1_key)
         lvl2 = self.HIERARCHY.get(scope_2_key)
@@ -117,8 +116,16 @@ class GeographicalTaxonomy:
 
         # Scenario A: Same level (e.g., US vs US, or DE vs US)
         if lvl1 == lvl2:
-            intersection = s1_set.intersection(s2_set)
-            return "EXACT_MATCH" if intersection else "NO_OVERLAP"
+            if s1_set == s2_set:
+                return "EXACT_MATCH"
+            elif s1_set.issuperset(s2_set):
+                return "SCOPE_1_IS_BROADER"
+            elif s1_set.issubset(s2_set):
+                return "SCOPE_1_IS_NARROWER"
+            elif s1_set.intersection(s2_set):
+                return "SAME_LEVEL_PARTIAL"
+            else:
+                return "NO_OVERLAP"
 
         # Scenario B: Scope 1 is broader (e.g., Geo vs Country)
         elif lvl1 < lvl2:
@@ -289,6 +296,17 @@ def compare_directives(dir_1_key: str, dir_1_val: Any, dir_2_key: str, dir_2_val
 def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict[str, Any]]:
     """
     Parses the TOML string and checks for hierarchical/semantic conflicts against the new intent.
+
+    Each conflict dict contains a ``conflict_type`` key, which is one of:
+    - PARTIAL_OVERLAP   – geographic or map-level partial intersection
+    - DIRECT_COLLISION  – exact scope, opposite directive
+    - INEFFECTIVE       – new broader rule overridden by existing narrower rule
+    - CARVE_OUT         – new narrow rule punches a hole in existing broader policy
+    - DEAD_CODE         – new broader or identical rule makes existing rule obsolete
+    - REDUNDANT         – new narrow rule already fully covered by existing broader rule
+    - PARSE_ERROR       – TOML could not be parsed
+    - INVALID_INTENT    – intent is missing required scope or directive fields
+
     Returns a list of structured conflict dictionaries.
     """
     # Initialize the taxonomy (Assumes data/ is at the project root)
@@ -354,7 +372,7 @@ def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict
         conflict_type = None
         message = ""
 
-        if scope_relation in {"SCOPE_1_IS_BROADER_PARTIAL", "SCOPE_1_IS_NARROWER_PARTIAL"}:
+        if scope_relation in {"SCOPE_1_IS_BROADER_PARTIAL", "SCOPE_1_IS_NARROWER_PARTIAL", "SAME_LEVEL_PARTIAL"}:
             conflict_type = "PARTIAL_OVERLAP"
             message = (
                 f"Geographical partial overlap: Your rule overlaps with some, but not all, "
@@ -376,6 +394,14 @@ def detect_conflicts(new_intent: Dict[str, Any], toml_content: str) -> List[Dict
         elif scope_relation == "SCOPE_1_IS_BROADER" and dir_relation == "SAME":
             conflict_type = "DEAD_CODE"
             message = f"Dead code: Your new broader rule makes the narrower existing rule in {rec_ticket} obsolete."
+
+        elif scope_relation == "SCOPE_1_IS_NARROWER" and dir_relation == "SAME":
+            conflict_type = "REDUNDANT"
+            message = f"Redundant rule: Your new narrow rule is already completely covered by the existing broader rule in {rec_ticket}."
+
+        elif scope_relation == "EXACT_MATCH" and dir_relation == "SAME":
+            conflict_type = "DEAD_CODE"
+            message = f"Exact duplicate: Your rule is completely identical to or overwrites the existing rule in {rec_ticket}."
             
         if partial_map_overlap and conflict_type:
             message += f" Note: This only applies to the overlapping maps: {list(intersection)}."
@@ -410,16 +436,29 @@ if __name__ == "__main__":
         # Creating a mock intent that directly collides with LEROYOPS-61 in the provided TOML
         conflict_intent = {
             "Ticket-id": "LEROYOPS-999",
-            "Mapnames": ["mm2", "w4"], 
+            "Mapnames": ["mm2", "mm3"], 
+            "Geographical-Scope": {"Region-country": ["DE"]},
+            "Override-Directive": {"Access-control": "must-exclude"}
+        }
+
+        conflicts = detect_conflicts(conflict_intent, toml_content)
+        has_conflict = bool(conflicts)
+        print(f"Conflicts: {conflicts}\n\n")
+
+        print("--- Test 2: same as test 1 but with 'allowed' Access-control ---")
+        # Creating a mock intent that directly collides with LEROYOPS-61 in the provided TOML
+        conflict_intent = {
+            "Ticket-id": "LEROYOPS-999",
+            "Mapnames": ["mm2", "mm3"], 
             "Geographical-Scope": {"Region-country": ["DE"]},
             "Override-Directive": {"Access-control": "allowed"}
         }
-        
-        has_conflict, msg, records = detect_conflicts(conflict_intent, toml_content)
-        print(f"Has Conflict: {has_conflict}")
-        print(f"Message: {msg}")
-        
-        print("\n--- Test 2: Simulating a Safe, New Rule ---")
+
+        conflicts = detect_conflicts(conflict_intent, toml_content)
+        has_conflict = bool(conflicts)
+        print(f"Conflicts: {conflicts}\n\n")
+
+        print("\n--- Test 3: Simulating a Safe, New Rule ---")
         # Creating a mock intent that touches the same region but a DIFFERENT mapname
         safe_intent = {
             "Ticket-id": "LEROYOPS-1000",
@@ -427,7 +466,30 @@ if __name__ == "__main__":
             "Geographical-Scope": {"Region-country": ["DE"]},
             "Override-Directive": {"Access-control": "must-exclude"}
         }
-        
-        has_conflict2, msg2, records2 = detect_conflicts(safe_intent, toml_content)
-        print(f"Has Conflict: {has_conflict2}")
-        print(f"Message: {msg2}")
+
+        conflicts2 = detect_conflicts(safe_intent, toml_content)
+        has_conflict2 = bool(conflicts2)
+        print(f"Conflicts: {conflicts2}\n\n")
+
+
+        print("\n--- Test 4: Simulating a Superset (DEAD_CODE) ---")
+        superset_intent = {
+            "Ticket-id": "LEROYOPS-1001",
+            "Mapnames": ["mm2"],
+            "Geographical-Scope": {"Region-country": ["DE", "ES", "FR", "GB", "IT", "NL", "SE"]},
+            "Override-Directive": {"Access-control": "must-exclude"}
+        }
+
+        conflicts3 = detect_conflicts(superset_intent, toml_content)
+        # has_conflict3 = bool(conflicts3)
+        # msg3 = conflicts3[0]["message"] if conflicts3 else "No conflicts found."
+        # records3 = [c.get("record") for c in conflicts3]
+        # print(f"Has Conflict: {has_conflict3}")
+        # print(f"Message: {msg3}")
+        # print(f"Records Count: {len(records3)}")
+        print(f"Conflicts: {conflicts3}\n\n")
+
+        # for conflict in conflicts3:
+        #     print(f"Conflict Type: {conflict.get('conflict_type')}")
+        #     print(f"Ticket ID: {conflict.get('ticket_id')}")
+        #     print(f"Message: {conflict.get('message')}")

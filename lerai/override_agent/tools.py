@@ -547,11 +547,13 @@ def commit_and_push_workspace(
             ticket_id=ticket_id,
             commit_message=commit_message,
         )
+        git_diff = workspace.get_head_diff()
         workspace.push()
 
         return {
             "ok": True,
             "message": "Successfully committed and pushed changes to remote repository.",
+            "diff": git_diff,
         }
     except Exception as exc:
         return {"ok": False, "error": f"Failed to commit and push: {exc}"}

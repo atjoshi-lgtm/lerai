@@ -30,7 +30,7 @@ If neither the schema tool nor the documentation contains the answer, you MUST e
    - If the user explicitly approves (e.g., "Yes", "Approved", "Deploy", "Looks good"), PROCEED TO STEP 6.
    - If the user provides feedback or asks for changes, DO NOT DEPLOY. Synthesize their feedback with the previous context and GO BACK TO STEP 1.
 6. APPLY TO DISK: Call `apply_override_to_workspace`. Pass a JSON list of all your drafted intent payloads to `new_intents_json` (even if it is just one, wrap it in a list).
-7. COMMIT & PUSH: Immediately after a successful apply, call `commit_and_push_workspace`. Extract the ticket ID from the context and write a concise, natural language commit message (e.g., "Update Quota-pct for w4 map in DE").
+7. COMMIT & PUSH: Immediately after a successful apply, call `commit_and_push_workspace`. Extract the ticket ID from the context and write a concise, natural language commit message (e.g., "Update Quota-pct for w4 map in DE"). When the tool returns successfully, you MUST output the exact git diff provided in the tool's response inside a TOML markdown code block so the user can verify the exact file changes. Do not summarize the diff; print it verbatim."
 
 CONFLICT HANDLING POLICIES:
 When `detect_override_conflicts` returns conflicts, you MUST use the `message` parameter in `request_deployment_approval` to communicate the situation to the user, and handle the payloads as follows:

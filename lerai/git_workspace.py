@@ -99,6 +99,31 @@ class TransientGitWorkspace:
 
             self._run_git(["push"], cwd=self.local_path, error_type=GitPushError)
 
+    def get_head_diff(self) -> str:
+        with self._acquire_lock():
+            if not self.local_path.exists():
+                raise GitWorkspaceError(f"Workspace does not exist: {self.local_path}")
+
+            completed = subprocess.run(
+                ["git", "show", "--pretty=format:", "HEAD"],
+                cwd=str(self.local_path),
+                env=self._build_env(),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                stderr = (completed.stderr or "").strip()
+                stdout = (completed.stdout or "").strip()
+                message = "git show --pretty=format: HEAD failed"
+                if stderr:
+                    message = f"{message}: {stderr}"
+                elif stdout:
+                    message = f"{message}: {stdout}"
+                raise GitWorkspaceError(message)
+
+            return (completed.stdout or "").strip()
+
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         env["GIT_SSH_COMMAND"] = f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"

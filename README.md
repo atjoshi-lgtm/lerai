@@ -12,6 +12,7 @@ It provides command-driven workflows for:
 - promotion request/approval flow,
 - interactive LeROY override TOML generation through a thread-aware agent that writes flat TOML records,
 - approval-gated override deployment previews with explicit add/delete stanza review and split-and-replace guidance for partial overlaps,
+- approval-gated override deployment results that include the exact committed Git diff from `HEAD`,
 - semantic override conflict classification with scope-aware warnings and explicit replace/add guidance,
 - LeROY documentation search and infrastructure lookup for override-related questions.
 

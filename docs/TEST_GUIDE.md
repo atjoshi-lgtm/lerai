@@ -59,6 +59,7 @@ What to verify manually:
 - Conflict checks also surface map-name validation warnings for unknown map shortnames.
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
+- Successful deployment responses include the committed Git diff payload from `HEAD` (returned by `commit_and_push_workspace`).
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
 
@@ -131,6 +132,10 @@ Why it matters: Git errors must be visible for debugging.
 Checks that `push()` failures include stderr in the exception message.
 
 Why it matters: push errors must be surfaced with detail for troubleshooting.
+
+### Note on current coverage
+
+`TransientGitWorkspace.get_head_diff()` is now part of the deployment path and returns the committed `HEAD` diff string used in the final success payload. If you extend Git workspace tests, include success and failure-path assertions for `git show --pretty=format: HEAD` output handling.
 
 ## `tests/test_mapname_validation.py`
 

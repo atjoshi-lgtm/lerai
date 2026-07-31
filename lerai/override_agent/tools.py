@@ -444,6 +444,10 @@ def apply_override_to_workspace(
         try:
             parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
+                # If the LLM wrapped the array in a single key like {"to_delete": [...]}, unwrap it
+                if len(parsed) == 1 and isinstance(list(parsed.values())[0], list):
+                    return list(parsed.values())[0]
+                # Otherwise, treat it as a single flat record
                 return [parsed]
             elif isinstance(parsed, list):
                 return parsed

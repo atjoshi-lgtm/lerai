@@ -24,7 +24,7 @@ Key areas and ownership boundaries:
 - lerai/lerai_main.py: Webex bot startup and command registration.
 - lerai/lerai_commands.py: Command classes and dispatch behavior.
 - lerai/leroy_overrides_writer.py: Override orchestration entry point.
-- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 6) and `commit_and_push_workspace` (STEP 7, now returns the committed Git diff payload on success).
+- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 6) and `commit_and_push_workspace` (STEP 7, now returns the committed Git diff payload on success). The internal `_parse_payload` helper now unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents.
 - lerai/overrides_pipeline/entity_extractor.py: Structured intent extraction and normalization.
 - lerai/overrides_pipeline/conflict_detector.py: Conflict checks against existing override records.
 - lerai/overrides_pipeline/toml_generator.py: TOML stanza creation, schema validation, and the deterministic `execute_ast_update` nuke-and-append AST engine that mutates a parsed `override.toml` document.

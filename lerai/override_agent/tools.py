@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import pathlib
 from pathlib import Path
 from typing import Any
@@ -28,12 +29,20 @@ OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
 SCHEMA_PATH = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_entity_extractor_tool.json"
 
 
+def _get_override_toml_relative_path() -> Path:
+    """Returns the override TOML path inside the cloned repo from environment config."""
+    configured_path = os.environ.get("LEROY_OVERRIDE_TOML_RELATIVE_PATH")
+    if not configured_path:
+        raise ValueError("Missing required environment variable: LEROY_OVERRIDE_TOML_RELATIVE_PATH")
+    return Path(configured_path)
+
+
 def _load_override_toml_read_only(workspace_path: str) -> str:
     """Reads override.toml in read-only mode; never writes to disk."""
     if not workspace_path:
         raise ValueError("workspace_path is required but was not provided.")
 
-    toml_path = Path(workspace_path) / "override.toml"
+    toml_path = Path(workspace_path) / _get_override_toml_relative_path()
     if not toml_path.exists():
         raise FileNotFoundError(
             f"override.toml not found in cloned workspace: {workspace_path}"
@@ -508,7 +517,7 @@ def apply_override_to_workspace(
                 f"Invalid or missing workspace_path: {workspace_path!r}"
             )
 
-        toml_path = Path(workspace_path) / "override.toml"
+        toml_path = Path(workspace_path) / _get_override_toml_relative_path()
         if not toml_path.exists():
             raise FileNotFoundError(
                 f"override.toml not found in workspace: {workspace_path}"

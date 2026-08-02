@@ -37,8 +37,17 @@ The local environment uses `python3`; `python` may not be available on the PATH.
 The override agent uses an interactive LangGraph with thread checkpointing and interrupt/resume behavior. The bot always evaluates conflict detection against fresh production state using an ephemeral cloned workspace (same as production). In addition to unit tests, run the local CLI harness for a quick manual sanity check:
 
 ```bash
+source exports.sh
+python3 test_cli.py
+```
+
+If setting variables manually instead of sourcing `exports.sh`, set all required values:
+
+```bash
 export LEROY_GIT_REPO_URL=<your-git-repo>
+export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
+export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
 python3 test_cli.py
 ```
 
@@ -54,7 +63,7 @@ What to verify manually:
 - A plain threaded follow-up message (without retyping `/write_override`) continues the same override flow.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
 - Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.
-- **Conflict checks always read from the cloned workspace `override.toml`, not the local project root.**
+- **Conflict checks always read from the cloned workspace path configured by `LEROY_OVERRIDE_TOML_RELATIVE_PATH`, not the local project root.**
 - Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
 - Conflict checks also surface map-name validation warnings for unknown map shortnames.
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.

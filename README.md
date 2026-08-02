@@ -51,9 +51,17 @@ python3 test_cli.py
 
 The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
 
-Note: Running `test_cli.py` requires the Git environment variables to be set:
+Note: Running `test_cli.py` requires the Git environment variables to be set. The canonical source is `exports.sh`:
+
+```bash
+source exports.sh
+```
+
+If you need to set them manually, provide all required Git workspace values:
 
 ```bash
 export LEROY_GIT_REPO_URL=<your-repo-url>
+export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
+export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
 ```

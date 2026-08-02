@@ -42,11 +42,13 @@ class TransientGitWorkspace:
     def __init__(
         self,
         repo_url: str | None = None,
+        branch: str | None = None,
         local_path: str | Path | None = None,
         ssh_key_path: str | None = None,
         lock_path: str | Path = "/tmp/leroy_git.lock",
     ) -> None:
         self.repo_url = repo_url or os.environ.get("LEROY_GIT_REPO_URL")
+        self.branch = branch or os.environ.get("LEROY_GIT_BRANCH")
         self.local_path = Path(local_path or os.environ.get("LEROY_GIT_LOCAL_PATH", "/tmp/leroy_config_test"))
         self.ssh_key_path = ssh_key_path or os.environ.get("LEROY_GIT_SSH_KEY_PATH")
         self.lock_path = Path(lock_path)
@@ -70,8 +72,13 @@ class TransientGitWorkspace:
                 except OSError as exc:
                     raise GitCloneError(f"Failed to remove existing workspace: {self.local_path}") from exc
 
+            clone_args = ["clone"]
+            if self.branch:
+                clone_args.extend(["--branch", self.branch])
+            clone_args.extend([self.repo_url, str(self.local_path)])
+
             self._run_git(
-                ["clone", self.repo_url, str(self.local_path)],
+                clone_args,
                 cwd=None,
                 error_type=GitCloneError,
             )
@@ -97,7 +104,10 @@ class TransientGitWorkspace:
             if not self.local_path.exists():
                 raise GitPushError(f"Workspace does not exist: {self.local_path}")
 
-            self._run_git(["push"], cwd=self.local_path, error_type=GitPushError)
+            push_args = ["push"]
+            if self.branch:
+                push_args.extend(["origin", self.branch])
+            self._run_git(push_args, cwd=self.local_path, error_type=GitPushError)
 
     def get_head_diff(self) -> str:
         with self._acquire_lock():

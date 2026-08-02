@@ -16,6 +16,7 @@ class TransientGitWorkspaceTests(unittest.TestCase):
         key_path.write_text("dummy key", encoding="utf-8")
         return TransientGitWorkspace(
             repo_url="git@example.com:repo.git",
+            branch="offline_test_branch",
             local_path=local_path,
             ssh_key_path=str(key_path),
             lock_path=Path(base_dir) / "git.lock",
@@ -37,7 +38,17 @@ class TransientGitWorkspaceTests(unittest.TestCase):
             run_mock.assert_called_once()
             self.assertEqual(run_mock.call_args.kwargs["cwd"], None)
             self.assertEqual(run_mock.call_args.kwargs["env"]["GIT_SSH_COMMAND"], f"ssh -i {workspace.ssh_key_path} -o StrictHostKeyChecking=no")
-            self.assertEqual(run_mock.call_args.args[0], ["git", "clone", workspace.repo_url, str(workspace.local_path)])
+            self.assertEqual(
+                run_mock.call_args.args[0],
+                [
+                    "git",
+                    "clone",
+                    "--branch",
+                    "offline_test_branch",
+                    workspace.repo_url,
+                    str(workspace.local_path),
+                ],
+            )
 
     def test_clone_raises_lock_error_when_lock_is_busy(self):
         with tempfile.TemporaryDirectory() as temp_dir:

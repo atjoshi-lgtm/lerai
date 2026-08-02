@@ -81,7 +81,7 @@ Important modules under `lerai/`:
 | `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app. Per request: (1) generates a unique UUID for the request, (2) creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory, (3) clones the Git repo there using TransientGitWorkspace, (4) passes `workspace_path` to the LangGraph config so conflict detection reads from the fresh clone, and (5) guarantees cleanup with try/finally. Also handles thread-id resolution (native parent blocks, `parentId`, and Webex API fallback), interrupt/resume behavior, and threaded reply handling. Interrupt payloads are extracted from LangGraph interrupt objects and rendered as clean markdown action prompts in sequence (when multiple interrupts are present), instead of emitting raw `Interrupt(value=...)` object text. |
 | `lerai/override_agent/graph.py` | Builds a singleton LangGraph app with a persistent SQLite checkpointer (`lerai_checkpoints.db`). |
 | `lerai/override_agent/nodes.py` | Defines the supervisor node, Azure model wiring, tool routing (via `SUPERVISOR_TOOLS` from `tools.py`), debug-level pretty-printed LLM request/response logging, and the initial input builder. |
-| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, approval-gate interrupt generation (`request_deployment_approval`), workspace deployment (`apply_override_to_workspace`) that normalizes nested intent payloads into flat TOML records before reading/mutating/writing the workspace `override.toml` (the internal `_parse_payload` helper also unwraps single-key dict wrappers such as `{"to_delete": [...]}` that the LLM may emit in place of a bare JSON array), and Git deployment (`commit_and_push_workspace`) that commits and pushes the change via `TransientGitWorkspace` and returns the committed `HEAD` diff in the success payload. |
+| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, approval-gate interrupt generation (`request_deployment_approval`), workspace deployment (`apply_override_to_workspace`) that normalizes nested intent payloads into flat TOML records before reading/mutating/writing the workspace `override.toml` (the internal `_parse_payload` helper also unwraps single-key dict wrappers such as `{"to_delete": [...]}` that the LLM may emit in place of a bare JSON array), Git deployment (`commit_and_push_workspace`) that commits and pushes via `TransientGitWorkspace` and returns the committed `HEAD` diff, and remote offline quota trigger (`trigger_offline_quota_computation`) that runs an SSH-based Airflow worker command and returns captured stdout/stderr. |
 | `lerai/override_agent/knowledge_base.py` | Builds a hybrid retriever over `docs/leroy_manual/` using Chroma plus BM25 and persists the local vector index in `lerai/data/chroma_index/`. |
 | `lerai/override_agent/state.py` | Typed graph state (`messages`, `conflict_report`, `draft_toml`). |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. Deterministically extracts multiple ticket IDs (e.g., `LEROYOPS-61 LEROYOPS-99`) from user text, Jira context, or LLM output, deduplicating them while preserving order. Normalizes geographical scope values (maps region names to codes, converts `Region-default` global keywords, etc.). |
@@ -125,6 +125,7 @@ graph TD
     ToolNode --> ToolApprove[request_deployment_approval]
     ToolNode --> ToolApply[apply_override_to_workspace]
     ToolNode --> ToolCommit[commit_and_push_workspace]
+    ToolNode --> ToolOffline[trigger_offline_quota_computation]
     ToolExtract --> Extract[overrides_pipeline/entity_extractor.py]
     ToolConflict --> Conflict[overrides_pipeline/conflict_detector.py]
     ToolConflict --> GitWS
@@ -132,6 +133,8 @@ graph TD
     ToolApply --> Gen
     ToolApply --> GitWS
     ToolCommit --> GitWS
+    ToolCommit --> ToolOffline
+    ToolOffline --> Cplex[prod-perf-cplex10.dfw02.corp.akamai.com]
     ToolDocs --> KB[override_agent/knowledge_base.py]
     KB --> LeroyDocs[docs/leroy_manual/*.md]
     KB --> Chroma[(lerai/data/chroma_index)]
@@ -554,10 +557,12 @@ Flow:
     - `To Be Deleted (Nuked)` stanzas,
     - `To Be Added` stanzas,
     - and a direct approval prompt. The supervisor prompt now maps direct collisions and dead-code cases to replacement, ineffective and carve-out cases to additive warnings, and partial overlaps to an explicit split-and-replace follow-up.
-10. After the user explicitly approves, `apply_override_to_workspace` reads the live `override.toml` from the ephemeral `workspace_path`, parses it with `tomlkit`, normalizes any nested intent payloads into flat records, calls `execute_ast_update(...)` to nuke any target records and append one or more approved intents, and writes the mutated document back to disk. Delete operations preserve existing inline/stanza comments by transferring raw `tomlkit` comment/whitespace entries from deleted stanzas to surviving neighbors before removal. `commit_and_push_workspace` then commits the change with the `LeRAI Bot` author identity, captures the committed `HEAD` diff via `TransientGitWorkspace.get_head_diff()`, and pushes to the remote repository. The success payload now includes that diff (`{"ok": true, "message": ..., "diff": "..."}`), while failures still return a structured error payload.
-11. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
-12. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
-13. If a final AI response is produced:
+10. After the user explicitly approves, `apply_override_to_workspace` reads the live `override.toml` from the ephemeral `workspace_path`, parses it with `tomlkit`, normalizes any nested intent payloads into flat records, calls `execute_ast_update(...)` to nuke any target records and append one or more approved intents, and writes the mutated document back to disk. Delete operations preserve existing inline/stanza comments by transferring raw `tomlkit` comment/whitespace entries from deleted stanzas to surviving neighbors before removal.
+11. `commit_and_push_workspace` then commits the change with the `LeRAI Bot` author identity, captures the committed `HEAD` diff via `TransientGitWorkspace.get_head_diff()`, and pushes to the remote repository. The success payload includes that diff (`{"ok": true, "message": ..., "diff": "..."}`).
+12. `trigger_offline_quota_computation` then runs the remote post-push offline quota workflow over SSH (`ssh-agent` bootstrap, key add, forwarded-agent SSH session, remote `git pull`, and dockerized quota script execution). The tool returns structured results including `stdout` and `stderr` for confirmation and troubleshooting.
+13. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
+14. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
+15. If a final AI response is produced:
     - in Webex mode, post as a threaded reply (`parentId=thread_id`) and return `None` to command handler,
     - in local/CLI mode, return the markdown text directly.
 
@@ -573,7 +578,7 @@ Key behaviors in the current implementation:
 - Follow-up threaded messages with no explicit command keyword are automatically treated as `/write_override` turns by the command router.
 - The local documentation index lives in `lerai/data/chroma_index/` and is ignored by git so retrieval artifacts do not show up as source changes.
 - Deterministic safety checks remain in place through `overrides_pipeline/conflict_detector.py` and `overrides_pipeline/toml_generator.py`.
-- Deployment is a deterministic two-step, approval-gated path: `apply_override_to_workspace` mutates the workspace `override.toml` via the `execute_ast_update` AST engine, and `commit_and_push_workspace` commits, captures the committed `HEAD` diff, and pushes through `TransientGitWorkspace`. Both run against the per-request ephemeral clone and never touch the source repository checkout.
+- Deployment is a deterministic three-step, approval-gated path: `apply_override_to_workspace` mutates the workspace `override.toml` via the `execute_ast_update` AST engine, `commit_and_push_workspace` commits/captures diff/pushes through `TransientGitWorkspace`, and `trigger_offline_quota_computation` executes the remote offline quota pipeline over SSH with captured stdout/stderr. All steps run against request-scoped data and never mutate the source repository checkout directly.
 
 ### Scheduled Jobs
 
@@ -635,6 +640,24 @@ These functions can post reports to Webex spaces. However, scheduler registratio
 | `LOG_ERRORS_URL` | `lerai/log_error_summary.py` | Airflow log error endpoint. |
 | `RUN_QUERY2_URL` | `lerai/query2_variance_addition.py`, `lerai/quota_exceed.py` | Query2 execution endpoint. |
 | `LEROY_AGENT_PROMOTE_URL` | `lerai/promote.py` | LeROY promotion execution endpoint. |
+
+### LeROY Override Deployment and Offline Trigger
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `LEROY_GIT_REPO_URL` | `lerai/git_workspace.py` | Git repository URL cloned into a transient workspace for each override request. |
+| `LEROY_GIT_BRANCH` | `lerai/git_workspace.py` | Branch used for push operations when set. |
+| `LEROY_GIT_SSH_KEY_PATH` | `lerai/git_workspace.py` | SSH key path used by transient Git clone/push operations. |
+| `LEROY_OVERRIDE_TOML_RELATIVE_PATH` | `lerai/override_agent/tools.py` | Relative path to `override.toml` inside cloned repo. |
+| `LEROY_OFFLINE_REMOTE_HOST` | `lerai/override_agent/tools.py` | SSH target for post-push offline quota run (for example cplex host). |
+| `LEROY_OFFLINE_SSH_KEY_PATH` | `lerai/override_agent/tools.py` | SSH key loaded into temporary `ssh-agent` before remote trigger. |
+| `LEROY_OFFLINE_REPO_DIR` | `lerai/override_agent/tools.py` | Remote checkout directory where `git pull` is executed before quota run. |
+| `LEROY_OFFLINE_DOCKER_CONTAINER` | `lerai/override_agent/tools.py` | Remote docker container name used for Airflow worker execution. |
+| `LEROY_OFFLINE_DAGS_DIR` | `lerai/override_agent/tools.py` | Working directory inside container before launching compute script. |
+| `LEROY_OFFLINE_SCRIPT_PATH` | `lerai/override_agent/tools.py` | Relative path to `compute_quota_offline.py` inside DAGs directory. |
+| `LEROY_OFFLINE_OVERRIDE_PATH` | `lerai/override_agent/tools.py` | Remote override TOML path passed to compute script. |
+| `LEROY_OFFLINE_DYNAMIC_PATH` | `lerai/override_agent/tools.py` | Remote dynamic config JSON path passed to compute script. |
+| `LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC` | `lerai/override_agent/tools.py` | Timeout in seconds for the offline SSH trigger command. |
 
 ## Prompt Templates
 
@@ -763,6 +786,8 @@ Additional local branch updates reflected in this document:
 - Added `get_unique_infrastructure_values` in `lerai/override_agent/tools.py` for discovery of active geos/countries/metros.
 - Added `lookup_directive_schema` in `lerai/override_agent/tools.py` to return exact directive constraints from `lerai/prompts/leroy_override_entity_extractor_tool.json`.
 - Updated `lerai/prompts/override_agent_supervisor_system_prompt.txt` to require `lookup_directive_schema` for exact constraint questions and to enforce a strict continent workflow (`get_unique_infrastructure_values` then filtered lookup) instead of broad geo substitution.
+- Added `trigger_offline_quota_computation` in `lerai/override_agent/tools.py` to execute remote post-push offline quota computation via SSH with `ssh-agent` bootstrap and captured stdout/stderr.
+- Added `LEROY_OFFLINE_*` environment variables in `exports.sh` for remote host/key/path/container/script/timeout configuration used by the offline quota trigger.
 - Refreshed `lerai/data/metro_region.csv` with an additional Los Angeles (`FABRIC-LAX2`) mapping row.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `_load_csv_data` to normalize `region_to_metro` values with `.replace(" ", "_")` so region-number lookups resolve to underscore-joined metro names consistent with entity-extractor output.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `compare_scopes` same-level branch from a simple intersection check to a full set comparison, adding `SCOPE_1_IS_BROADER`, `SCOPE_1_IS_NARROWER`, and `SAME_LEVEL_PARTIAL` outcomes for same-level scopes.

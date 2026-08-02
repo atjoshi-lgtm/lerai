@@ -13,6 +13,7 @@ It provides command-driven workflows for:
 - interactive LeROY override TOML generation through a thread-aware agent that writes flat TOML records,
 - approval-gated override deployment previews with explicit add/delete stanza review and split-and-replace guidance for partial overlaps,
 - approval-gated override deployment results that include the exact committed Git diff from `HEAD`,
+- post-push offline quota computation trigger over SSH with captured stdout/stderr diagnostics,
 - semantic override conflict classification with scope-aware warnings and explicit replace/add guidance,
 - LeROY documentation search and infrastructure lookup for override-related questions.
 
@@ -64,4 +65,15 @@ export LEROY_GIT_REPO_URL=<your-repo-url>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
+
+# Required when testing the post-push offline quota trigger path
+export LEROY_OFFLINE_REMOTE_HOST=<user@cplex-host>
+export LEROY_OFFLINE_SSH_KEY_PATH=<path-to-ssh-key>
+export LEROY_OFFLINE_REPO_DIR=<remote-leroy-config-repo-dir>
+export LEROY_OFFLINE_DOCKER_CONTAINER=<airflow-worker-container>
+export LEROY_OFFLINE_DAGS_DIR=<airflow-dags-dir>
+export LEROY_OFFLINE_SCRIPT_PATH=<compute_quota_offline.py-path>
+export LEROY_OFFLINE_OVERRIDE_PATH=<override-toml-path-on-remote>
+export LEROY_OFFLINE_DYNAMIC_PATH=<dynamic-config-path-on-remote>
+export LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC=<timeout-seconds>
 ```

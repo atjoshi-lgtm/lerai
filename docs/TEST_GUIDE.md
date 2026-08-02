@@ -48,6 +48,17 @@ export LEROY_GIT_REPO_URL=<your-git-repo>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
+
+# Required when validating remote offline quota computation trigger
+export LEROY_OFFLINE_REMOTE_HOST=<user@cplex-host>
+export LEROY_OFFLINE_SSH_KEY_PATH=<path-to-ssh-key>
+export LEROY_OFFLINE_REPO_DIR=<remote-leroy-config-repo-dir>
+export LEROY_OFFLINE_DOCKER_CONTAINER=<airflow-worker-container>
+export LEROY_OFFLINE_DAGS_DIR=<airflow-dags-dir>
+export LEROY_OFFLINE_SCRIPT_PATH=<compute_quota_offline.py-path>
+export LEROY_OFFLINE_OVERRIDE_PATH=<override-toml-path-on-remote>
+export LEROY_OFFLINE_DYNAMIC_PATH=<dynamic-config-path-on-remote>
+export LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC=<timeout-seconds>
 python3 test_cli.py
 ```
 
@@ -69,6 +80,7 @@ What to verify manually:
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
 - Successful deployment responses include the committed Git diff payload from `HEAD` (returned by `commit_and_push_workspace`).
+- After push, remote offline quota trigger results include `stdout`/`stderr` for diagnosis (from `trigger_offline_quota_computation`).
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
 

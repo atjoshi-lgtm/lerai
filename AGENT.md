@@ -5,6 +5,7 @@ This agent is responsible for implementing and maintaining LeRAI command workflo
 
 Current delivery focus:
 - Build and harden the overrides pipeline end-to-end (intent extraction, conflict detection, TOML generation, schema validation, and response formatting).
+- Maintain and extend the CPLEX offline quota agent.
 
 Primary responsibilities:
 - Deliver code changes requested by users across command handlers, workflow modules, override pipeline, and supporting utilities.
@@ -24,7 +25,9 @@ Key areas and ownership boundaries:
 - lerai/lerai_main.py: Webex bot startup and command registration.
 - lerai/lerai_commands.py: Command classes and dispatch behavior.
 - lerai/leroy_overrides_writer.py: Override orchestration entry point.
-- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 6) and `commit_and_push_workspace` (STEP 7, now returns the committed Git diff payload on success). The internal `_parse_payload` helper now unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents.
+- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 6) and `commit_and_push_workspace` (STEP 7, now returns the committed Git diff payload on success). The internal `_parse_payload` helper now unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents. `trigger_offline_quota_computation` was extracted to `lerai/cplex_agent/tools.py`.
+- lerai/cplex_agent/: Standalone LangGraph agent for CPLEX offline quota computation. Contains `state.py` (`CplexAgentState`), `tools.py` (`trigger_offline_quota_computation`, `CPLEX_TOOLS`), `nodes.py` (`supervisor_node`), and `graph.py` (singleton `get_compiled_graph()` sharing `lerai_checkpoints.db` with the override agent).
+- lerai/cplex_runner.py: Bridges Webex bot traffic to the CPLEX agent (thread-id resolution, graph invoke, threaded reply).
 - lerai/overrides_pipeline/entity_extractor.py: Structured intent extraction and normalization.
 - lerai/overrides_pipeline/conflict_detector.py: Conflict checks against existing override records.
 - lerai/overrides_pipeline/toml_generator.py: TOML stanza creation, schema validation, and the deterministic `execute_ast_update` nuke-and-append AST engine that mutates a parsed `override.toml` document.

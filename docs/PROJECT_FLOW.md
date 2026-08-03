@@ -19,6 +19,7 @@ The bot currently supports these broad categories:
 - LeROY promotion request and approval flow.
 - Interactive LeROY override TOML generation with thread-aware pause/resume.
 - LeROY override-adjacent question answering through documentation search and infrastructure lookups.
+- CPLEX offline quota computation trigger and Airflow pipeline debugging via a dedicated LangGraph agent.
 
 The code is mostly organized as one command router plus one module per workflow. There is no full application framework beyond the Webex bot library.
 
@@ -52,12 +53,14 @@ requirements.txt                      Runtime dependency list added during clean
 README.md                             Minimal project README.
 openai_agent/openai_agent_client.py   Shared Azure OpenAI HTTP client.
 lerai/                                Main application package.
-lerai/override_agent/                 Interactive LangGraph supervisor and tool orchestration.
+lerai/override_agent/                 Interactive LangGraph supervisor and tool orchestration for LeROY overrides.
+lerai/cplex_agent/                    LangGraph agent for CPLEX offline quota computation and Airflow debugging.
 lerai/data/chroma_index/              Local persisted Chroma index for LeROY manual search (gitignored).
 lerai/overrides_pipeline/             Deterministic extraction/conflict/validation utilities used by the agent.
 lerai/netarch/                        Netarch database helpers and metro-region mapping exporter.
 lerai/prompts/                        Prompt templates used by LLM workflows.
 test_cli.py                           Local interactive CLI harness for the override agent.
+test_cplex_cli.py                     Local interactive CLI harness for the CPLEX agent.
 tests/                                No-server unit tests for payload and parser behavior.
 ```
 
@@ -78,10 +81,15 @@ Important modules under `lerai/`:
 | `lerai/quota_exceed.py` | Calls Query2 endpoint and formats quota/object-limit exceedance results. |
 | `lerai/promote.py` | Implements promotion request and approval token flow. |
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
+| `lerai/cplex_runner.py` | Bridges Webex command traffic to the CPLEX LangGraph app. Resolves the thread id, invokes the CPLEX graph, and sends the reply as a threaded Webex message (or returns the response string for CLI use). |
+| `lerai/cplex_agent/state.py` | `CplexAgentState` TypedDict with a single `messages` field. |
+| `lerai/cplex_agent/tools.py` | Defines `trigger_offline_quota_computation` (extracted from `override_agent/tools.py`) and exports `CPLEX_TOOLS`. |
+| `lerai/cplex_agent/nodes.py` | `supervisor_node` for the CPLEX graph. Loads `lerai/prompts/cplex_agent_system_prompt.txt` at import time, binds the LLM to `CPLEX_TOOLS`, and reuses `_build_supervisor_llm` and `should_continue` from `override_agent/nodes.py`. |
+| `lerai/cplex_agent/graph.py` | Singleton `get_compiled_graph()` for the CPLEX agent. Shares the same `lerai_checkpoints.db` SQLite file as the override agent via `_open_checkpoint_connection` from `override_agent/graph.py`. |
 | `lerai/leroy_overrides_writer.py` | Bridges Webex command traffic to the override LangGraph app. Per request: (1) generates a unique UUID for the request, (2) creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory, (3) clones the Git repo there using TransientGitWorkspace, (4) passes `workspace_path` to the LangGraph config so conflict detection reads from the fresh clone, and (5) guarantees cleanup with try/finally. Also handles thread-id resolution (native parent blocks, `parentId`, and Webex API fallback), interrupt/resume behavior, and threaded reply handling. Interrupt payloads are extracted from LangGraph interrupt objects and rendered as clean markdown action prompts in sequence (when multiple interrupts are present), instead of emitting raw `Interrupt(value=...)` object text. |
 | `lerai/override_agent/graph.py` | Builds a singleton LangGraph app with a persistent SQLite checkpointer (`lerai_checkpoints.db`). |
 | `lerai/override_agent/nodes.py` | Defines the supervisor node, Azure model wiring, tool routing (via `SUPERVISOR_TOOLS` from `tools.py`), debug-level pretty-printed LLM request/response logging, and the initial input builder. |
-| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, approval-gate interrupt generation (`request_deployment_approval`), workspace deployment (`apply_override_to_workspace`) that normalizes nested intent payloads into flat TOML records before reading/mutating/writing the workspace `override.toml` (the internal `_parse_payload` helper also unwraps single-key dict wrappers such as `{"to_delete": [...]}` that the LLM may emit in place of a bare JSON array), Git deployment (`commit_and_push_workspace`) that commits and pushes via `TransientGitWorkspace` and returns the committed `HEAD` diff, and remote offline quota trigger (`trigger_offline_quota_computation`) that runs an SSH-based Airflow worker command and returns captured stdout/stderr. |
+| `lerai/override_agent/tools.py` | Defines supervisor tools: intent extraction, conflict detection, TOML generation/validation, LeROY manual search, smart infrastructure lookup (normalization + alias + hierarchical joins), infrastructure value discovery, directive-schema lookup, approval-gate interrupt generation (`request_deployment_approval`), workspace deployment (`apply_override_to_workspace`) that normalizes nested intent payloads into flat TOML records before reading/mutating/writing the workspace `override.toml` (the internal `_parse_payload` helper also unwraps single-key dict wrappers such as `{"to_delete": [...]}` that the LLM may emit in place of a bare JSON array), and Git deployment (`commit_and_push_workspace`) that commits and pushes via `TransientGitWorkspace` and returns the committed `HEAD` diff. The `trigger_offline_quota_computation` tool was extracted to `lerai/cplex_agent/tools.py`. |
 | `lerai/override_agent/knowledge_base.py` | Builds a hybrid retriever over `docs/leroy_manual/` using Chroma plus BM25 and persists the local vector index in `lerai/data/chroma_index/`. |
 | `lerai/override_agent/state.py` | Typed graph state (`messages`, `conflict_report`, `draft_toml`). |
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. Deterministically extracts multiple ticket IDs (e.g., `LEROYOPS-61 LEROYOPS-99`) from user text, Jira context, or LLM output, deduplicating them while preserving order. Normalizes geographical scope values (maps region names to codes, converts `Region-default` global keywords, etc.). |
@@ -143,6 +151,7 @@ graph TD
     ToolSchema --> ExtractToolSchema[lerai/prompts/leroy_override_entity_extractor_tool.json]
     ToolApprove --> ToolApply
     OverrideGraph --> Checkpoint[(lerai_checkpoints.db)]
+    CplexGraph --> Checkpoint
 
     CsvDiff --> Azure[Azure OpenAI via openai_agent_client.py]
     Logs --> Azure
@@ -226,7 +235,7 @@ sequenceDiagram
 
 Additional routing behavior in `lerai/lerai_main.py`:
 
-- If a user posts in an existing Webex thread without typing an explicit command, the bot now auto-routes the message to `/write_override` so multi-turn override conversations continue naturally.
+- If a user posts in an existing Webex thread without typing an explicit command, the bot fetches the root message of that thread from the Webex API to determine which agent owns it. Messages in `/trigger_cplex` threads are re-routed to `/trigger_cplex`; messages in `diff_offline_prod` threads to `diff_offline_prod`; all others default to `/write_override`.
 
 ## Active Commands
 
@@ -242,6 +251,7 @@ Additional routing behavior in `lerai/lerai_main.py`:
 | `query_variance` | `QueryVarianceCommand` | `check_query2_for_variance_addition()` | Reports LR regions that need Query2 vsize variance addition. |
 | `quota_exceed` | `QuotaExceedCommand` | `check_query2_for_quota_exceed()` | Reports fp-config or object-count quota exceedance. |
 | `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Runs the interactive override agent with conversation persistence, conflict checks, interrupt/resume, and threaded Webex replies. |
+| `/trigger_cplex` | `TriggerCplexCommand` | `run_cplex_agent()` | Triggers offline CPLEX quota computation via the CPLEX LangGraph agent, then analyzes stdout/stderr and explains results or failures. |
 
 Defined but not actively registered:
 
@@ -559,10 +569,9 @@ Flow:
     - and a direct approval prompt. The supervisor prompt now maps direct collisions and dead-code cases to replacement, ineffective and carve-out cases to additive warnings, and partial overlaps to an explicit split-and-replace follow-up.
 10. After the user explicitly approves, `apply_override_to_workspace` reads the live `override.toml` from the ephemeral `workspace_path`, parses it with `tomlkit`, normalizes any nested intent payloads into flat records, calls `execute_ast_update(...)` to nuke any target records and append one or more approved intents, and writes the mutated document back to disk. Delete operations preserve existing inline/stanza comments by transferring raw `tomlkit` comment/whitespace entries from deleted stanzas to surviving neighbors before removal.
 11. `commit_and_push_workspace` then commits the change with the `LeRAI Bot` author identity, captures the committed `HEAD` diff via `TransientGitWorkspace.get_head_diff()`, and pushes to the remote repository. The success payload includes that diff (`{"ok": true, "message": ..., "diff": "..."}`).
-12. `trigger_offline_quota_computation` then runs the remote post-push offline quota workflow over SSH (`ssh-agent` bootstrap, key add, forwarded-agent SSH session, remote `git pull`, and dockerized quota script execution). The tool returns structured results including `stdout` and `stderr` for confirmation and troubleshooting.
-13. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
-14. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
-15. If a final AI response is produced:
+12. `nodes.py` logs pretty-printed LLM request and response payloads at debug level, including decoded nested JSON tool arguments/results, to make override-agent debugging readable without increasing default info-level noise.
+13. If graph returns `__interrupt__`, return that interrupt text to user and wait for next reply in the same thread.
+14. If a final AI response is produced:
     - in Webex mode, post as a threaded reply (`parentId=thread_id`) and return `None` to command handler,
     - in local/CLI mode, return the markdown text directly.
 
@@ -575,10 +584,10 @@ Key behaviors in the current implementation:
 - Conflict checks now also return map-name warnings when a requested map is not found in `lerai/data/maps.csv`, including `warnings` and `invalid_mapnames` fields in tool output.
 - The TOML writer now flattens nested JSON intent payloads before writing them, so generated override records stay single-level instead of being serialized as nested tables.
 - The writer now has robust room/thread extraction for varied Webex activity payload shapes.
-- Follow-up threaded messages with no explicit command keyword are automatically treated as `/write_override` turns by the command router.
+- Follow-up threaded messages with no explicit command keyword are dynamically routed by the command router: the bot fetches the thread's root message from Webex and dispatches to the agent that owns it (`/trigger_cplex`, `diff_offline_prod`, or `/write_override` as the default).
 - The local documentation index lives in `lerai/data/chroma_index/` and is ignored by git so retrieval artifacts do not show up as source changes.
 - Deterministic safety checks remain in place through `overrides_pipeline/conflict_detector.py` and `overrides_pipeline/toml_generator.py`.
-- Deployment is a deterministic three-step, approval-gated path: `apply_override_to_workspace` mutates the workspace `override.toml` via the `execute_ast_update` AST engine, `commit_and_push_workspace` commits/captures diff/pushes through `TransientGitWorkspace`, and `trigger_offline_quota_computation` executes the remote offline quota pipeline over SSH with captured stdout/stderr. All steps run against request-scoped data and never mutate the source repository checkout directly.
+- Deployment is a deterministic two-step, approval-gated path: `apply_override_to_workspace` mutates the workspace `override.toml` via the `execute_ast_update` AST engine, then `commit_and_push_workspace` commits/captures diff/pushes through `TransientGitWorkspace`. Both steps run against request-scoped data and never mutate the source repository checkout directly. Offline quota computation after push is handled separately by the `/trigger_cplex` CPLEX agent command.
 
 ### Scheduled Jobs
 
@@ -649,15 +658,15 @@ These functions can post reports to Webex spaces. However, scheduler registratio
 | `LEROY_GIT_BRANCH` | `lerai/git_workspace.py` | Branch used for push operations when set. |
 | `LEROY_GIT_SSH_KEY_PATH` | `lerai/git_workspace.py` | SSH key path used by transient Git clone/push operations. |
 | `LEROY_OVERRIDE_TOML_RELATIVE_PATH` | `lerai/override_agent/tools.py` | Relative path to `override.toml` inside cloned repo. |
-| `LEROY_OFFLINE_REMOTE_HOST` | `lerai/override_agent/tools.py` | SSH target for post-push offline quota run (for example cplex host). |
-| `LEROY_OFFLINE_SSH_KEY_PATH` | `lerai/override_agent/tools.py` | SSH key loaded into temporary `ssh-agent` before remote trigger. |
-| `LEROY_OFFLINE_REPO_DIR` | `lerai/override_agent/tools.py` | Remote checkout directory where `git pull` is executed before quota run. |
-| `LEROY_OFFLINE_DOCKER_CONTAINER` | `lerai/override_agent/tools.py` | Remote docker container name used for Airflow worker execution. |
-| `LEROY_OFFLINE_DAGS_DIR` | `lerai/override_agent/tools.py` | Working directory inside container before launching compute script. |
-| `LEROY_OFFLINE_SCRIPT_PATH` | `lerai/override_agent/tools.py` | Relative path to `compute_quota_offline.py` inside DAGs directory. |
-| `LEROY_OFFLINE_OVERRIDE_PATH` | `lerai/override_agent/tools.py` | Remote override TOML path passed to compute script. |
-| `LEROY_OFFLINE_DYNAMIC_PATH` | `lerai/override_agent/tools.py` | Remote dynamic config JSON path passed to compute script. |
-| `LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC` | `lerai/override_agent/tools.py` | Timeout in seconds for the offline SSH trigger command. |
+| `LEROY_OFFLINE_REMOTE_HOST` | `lerai/cplex_agent/tools.py` | SSH target for post-push offline quota run (for example cplex host). |
+| `LEROY_OFFLINE_SSH_KEY_PATH` | `lerai/cplex_agent/tools.py` | SSH key loaded into temporary `ssh-agent` before remote trigger. |
+| `LEROY_OFFLINE_REPO_DIR` | `lerai/cplex_agent/tools.py` | Remote checkout directory where `git pull` is executed before quota run. |
+| `LEROY_OFFLINE_DOCKER_CONTAINER` | `lerai/cplex_agent/tools.py` | Remote docker container name used for Airflow worker execution. |
+| `LEROY_OFFLINE_DAGS_DIR` | `lerai/cplex_agent/tools.py` | Working directory inside container before launching compute script. |
+| `LEROY_OFFLINE_SCRIPT_PATH` | `lerai/cplex_agent/tools.py` | Relative path to `compute_quota_offline.py` inside DAGs directory. |
+| `LEROY_OFFLINE_OVERRIDE_PATH` | `lerai/cplex_agent/tools.py` | Remote override TOML path passed to compute script. |
+| `LEROY_OFFLINE_DYNAMIC_PATH` | `lerai/cplex_agent/tools.py` | Remote dynamic config JSON path passed to compute script. |
+| `LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC` | `lerai/cplex_agent/tools.py` | Timeout in seconds for the offline SSH trigger command. |
 
 ## Prompt Templates
 
@@ -680,6 +689,7 @@ Prompt files live under `lerai/prompts/`.
 | `leroy_override_entity_extractor_system_prompt.txt` | `overrides_pipeline/entity_extractor.py` | System message instructing the LLM how to extract structured override intent from user input and optional Jira XML. |
 | `leroy_override_entity_extractor_tool.json` | `overrides_pipeline/entity_extractor.py`, `override_agent/tools.py` | Tool/function schema definition passed to the LLM for structured tool-call extraction of override intent, and also used as the schema source for `lookup_directive_schema`. |
 | `leroy_override_entity_extractor_user_prompt.txt` | `overrides_pipeline/entity_extractor.py` | User message template wrapping the user question (and optional Jira context) sent to the LLM. |
+| `cplex_agent_system_prompt.txt` | `cplex_agent/nodes.py` | SRE persona prompt for the CPLEX agent. Instructs the agent to call `trigger_offline_quota_computation` immediately when asked, then interpret the JSON result: summarize stdout on success (returncode 0) or diagnose tracebacks, Docker errors, and Airflow issues on failure. |
 | `override_agent_supervisor_system_prompt.txt` | `override_agent/nodes.py` | Supervisor instruction set for request routing, conflict handling, context synthesis across user turns, and multi-scope/multi-directive request handling. The current prompt routes conceptual questions to `search_leroy_documentation`, infrastructure questions to `lookup_infrastructure_data` (smart normalization/alias/hierarchy), broad geography asks through `get_unique_infrastructure_values` + filtered lookup flow, and structural schema questions to `lookup_directive_schema`. It requires `extract_override_intent` -> `generate_and_validate_toml` -> `detect_override_conflicts` -> `request_deployment_approval` for transactional override/deploy requests, enforces an approval-or-revise loop before mutation, requires list-wrapped intents when applying (`new_intents_json`), and adds explicit split-and-replace guidance for `PARTIAL_OVERLAP` cases before invoking `apply_override_to_workspace` and `commit_and_push_workspace`. |
 | `leroy_override_writer_response_templates.json` | `lerai/leroy_overrides_writer.py` | Markdown response templates for override generation outcomes and conflict/warning messaging returned to the Webex user. |
 
@@ -788,6 +798,16 @@ Additional local branch updates reflected in this document:
 - Updated `lerai/prompts/override_agent_supervisor_system_prompt.txt` to require `lookup_directive_schema` for exact constraint questions and to enforce a strict continent workflow (`get_unique_infrastructure_values` then filtered lookup) instead of broad geo substitution.
 - Added `trigger_offline_quota_computation` in `lerai/override_agent/tools.py` to execute remote post-push offline quota computation via SSH with `ssh-agent` bootstrap and captured stdout/stderr.
 - Added `LEROY_OFFLINE_*` environment variables in `exports.sh` for remote host/key/path/container/script/timeout configuration used by the offline quota trigger.
+
+Subsequent changes:
+
+- Extracted `trigger_offline_quota_computation` from `lerai/override_agent/tools.py` into `lerai/cplex_agent/tools.py` to decouple the CPLEX workflow from the override agent; removed it from `SUPERVISOR_TOOLS`.
+- Added `lerai/cplex_agent/` package (`state.py`, `nodes.py`, `tools.py`, `graph.py`) as a standalone LangGraph agent for CPLEX offline quota computation. Shares `lerai_checkpoints.db` and `_build_supervisor_llm` / `should_continue` with the override agent.
+- Added `lerai/cplex_runner.py` to bridge Webex bot traffic to the CPLEX agent (mirrors `leroy_overrides_writer.py` bridging pattern).
+- Added `lerai/prompts/cplex_agent_system_prompt.txt` as the SRE-persona system prompt for the CPLEX agent.
+- Added `TriggerCplexCommand` (`/trigger_cplex`) to `lerai/lerai_commands.py` and registered it in `lerai/lerai_main.py`.
+- Updated dynamic thread routing in `lerai/lerai_main.py` to fetch the root Webex message for each threadless reply and dispatch based on its command keyword (`/trigger_cplex` → CPLEX agent, `diff_offline_prod` → diff command, default → `/write_override`).
+- Added `test_cplex_cli.py` as a local interactive CLI harness for the CPLEX agent (no workspace cloning, no interrupt/resume logic).
 - Refreshed `lerai/data/metro_region.csv` with an additional Los Angeles (`FABRIC-LAX2`) mapping row.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `_load_csv_data` to normalize `region_to_metro` values with `.replace(" ", "_")` so region-number lookups resolve to underscore-joined metro names consistent with entity-extractor output.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `compare_scopes` same-level branch from a simple intersection check to a full set comparison, adding `SCOPE_1_IS_BROADER`, `SCOPE_1_IS_NARROWER`, and `SAME_LEVEL_PARTIAL` outcomes for same-level scopes.

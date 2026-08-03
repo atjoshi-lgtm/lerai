@@ -12,6 +12,7 @@ from query2_variance_addition import check_query2_for_variance_addition
 from quota_exceed import check_query2_for_quota_exceed
 from promote import handle_promotion_request, handle_approval_request
 from leroy_overrides_writer import write_toml
+from cplex_runner import run_cplex_agent
 from lerai.logging_utils import log_user_request, redact_value
 
 
@@ -291,6 +292,29 @@ class LeroyOverrideWriterCommand(Command):
     
 
     
+class TriggerCplexCommand(Command):
+    def __init__(self):
+        super().__init__(
+            command_keyword="/trigger_cplex",
+            exact_command_keyword_match=False,
+            help_message="Trigger and debug offline quota computation",
+            card=None,
+        )
+
+    def pre_execute(self, message, attachment_actions, activity):
+        logger.info(
+            "CPLEX trigger request received",
+            extra={
+                "request_message": redact_value(message),
+                "activity": redact_value(activity),
+            },
+        )
+        return "✅ Initiating CPLEX debugging agent... please wait."
+
+    def execute(self, message, attachment_actions, activity):
+        return run_cplex_agent(message, webex_message=activity)
+
+
 class SimulateDailyReport(Command):
     def __init__(self):
         super().__init__(

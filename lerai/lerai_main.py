@@ -25,6 +25,7 @@ from lerai_commands import (
     PromoteCommand,
     ApproveCommand,
     LeroyOverrideWriterCommand,
+    TriggerCplexCommand,
 )
 
 # Import scheduled jobs
@@ -95,21 +96,38 @@ class MentionOnlyWebexBot(WebexBot):
                     command_found = True
                     break
 
-        # --- CLEAN THREAD ROUTING FIX ---
+        # --- DYNAMIC THREAD ROUTING FIX ---
         # If no explicit command is found, but the message is part of an existing thread,
-        # seamlessly route it to the conversational override agent.
+        # fetch the root message of the thread to determine which agent owns it.
         if not command_found and not is_card_callback_command:
-            is_thread = False
+            parent_id = None
             if isinstance(activity, dict) and "parent" in activity:
-                is_thread = True
+                parent_id = activity["parent"].get("id")
             elif hasattr(teams_message, "parentId") and teams_message.parentId:
-                is_thread = True
+                parent_id = teams_message.parentId
 
-            if is_thread:
+            if parent_id:
+                target_command = "/write_override"  # Default fallback
+                try:
+                    token = os.environ.get("WEBEX_ACCESS_TOKEN")
+                    if token:
+                        from webexteamssdk import WebexTeamsAPI
+                        api = WebexTeamsAPI(access_token=token)
+                        root_msg = api.messages.get(parent_id)
+                        root_text = (root_msg.text or "").lower()
+
+                        # Identify the agent based on the root command
+                        if "/trigger_cplex" in root_text:
+                            target_command = "/trigger_cplex"
+                        elif "diff_offline_prod" in root_text:
+                            target_command = "diff_offline_prod"
+                except Exception as e:
+                    logger.warning(f"Failed to fetch thread root message for routing: {e}")
+
                 # Implicitly prefix the command so the parent router handles it correctly
-                raw_message = f"/write_override {raw_message}"
+                raw_message = f"{target_command} {raw_message}"
                 command_found = True
-        # --- END CLEAN FIX ---
+        # --- END DYNAMIC THREAD ROUTING FIX ---
 
         if not command_found:
             logger.info("Ignoring message with no matching command")
@@ -151,6 +169,7 @@ def lerai_main():
     bot.add_command(QueryVarianceCommand())
     bot.add_command(QuotaExceedCommand())
     bot.add_command(LeroyOverrideWriterCommand())
+    bot.add_command(TriggerCplexCommand())
     #bot.add_command(SimulateDailyReport())
     #bot.add_command(SimulateDailyOffloadReport())
 

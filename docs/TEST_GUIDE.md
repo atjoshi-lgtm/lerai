@@ -48,17 +48,6 @@ export LEROY_GIT_REPO_URL=<your-git-repo>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
-
-# Required when validating remote offline quota computation trigger
-export LEROY_OFFLINE_REMOTE_HOST=<user@cplex-host>
-export LEROY_OFFLINE_SSH_KEY_PATH=<path-to-ssh-key>
-export LEROY_OFFLINE_REPO_DIR=<remote-leroy-config-repo-dir>
-export LEROY_OFFLINE_DOCKER_CONTAINER=<airflow-worker-container>
-export LEROY_OFFLINE_DAGS_DIR=<airflow-dags-dir>
-export LEROY_OFFLINE_SCRIPT_PATH=<compute_quota_offline.py-path>
-export LEROY_OFFLINE_OVERRIDE_PATH=<override-toml-path-on-remote>
-export LEROY_OFFLINE_DYNAMIC_PATH=<dynamic-config-path-on-remote>
-export LEROY_OFFLINE_TRIGGER_TIMEOUT_SEC=<timeout-seconds>
 python3 test_cli.py
 ```
 
@@ -80,18 +69,46 @@ What to verify manually:
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
 - Successful deployment responses include the committed Git diff payload from `HEAD` (returned by `commit_and_push_workspace`).
-- After push, remote offline quota trigger results include `stdout`/`stderr` for diagnosis (from `trigger_offline_quota_computation`).
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
 
 Each session writes **two simultaneous log files** under `logs/test_cli/`, sharing the same timestamp:
 
-- `override_agent_YYYYMMDD_HHMMSS.log` — **INFO and above.** The primary readable log. Shows the complete flow of a session: user inputs and resumes, supervisor routing decisions, LLM token/latency summary per call, tool calls (with full pretty-printed arguments), tool results (with full pretty-printed output), pipeline steps (extractor query and extracted intent, generated TOML), and final assistant responses.
-- `override_agent_YYYYMMDD_HHMMSS.debug.log` — **DEBUG and above.** Same as the INFO log plus: slim LLM request payloads (last 3 non-system messages, system prompt shown as char count only), slim LLM response payloads (tool calls, tokens, latency, finish reason — no content-filter or logprob fields), extractor LLM token/latency line, resolved ticket ID candidates, and normalized extraction payload.
+- `override_agent_YYYYMMDD_HHMMSS.log` — **INFO and above.**
+- `override_agent_YYYYMMDD_HHMMSS.debug.log` — **DEBUG and above.**
 
 Every log line includes the emitting module name (e.g. `lerai.override_agent.nodes`, `lerai.overrides_pipeline.entity_extractor`), which makes it easy to trace which component produced each entry.
 
+The `override_agent_*.log` files follow the same INFO/DEBUG split described above. The primary log shows user inputs, routing decisions, tool calls/results, and final responses; the debug log adds slim LLM request/response payloads and extractor diagnostics.
+
 Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so they do not appear in either log file. The CLI automatically creates a unique ephemeral workspace per session and cleans it up when the session ends (including on error).
+
+## Manual Interactive CPLEX Agent Check
+
+The CPLEX agent invokes `trigger_offline_quota_computation` over SSH and uses the LLM to analyze the results. Run the dedicated CLI harness:
+
+```bash
+source exports.sh
+python3 test_cplex_cli.py
+```
+
+The `LEROY_OFFLINE_*` variables in `exports.sh` configure the SSH target, key path, remote repo directory, Docker container name, DAGs directory, script path, override/dynamic config paths, and timeout for the offline computation trigger.
+
+What to verify manually:
+
+- The CLI prints a unique session id prefixed `cplex_cli_`.
+- Typing "trigger quota computation" (or similar) causes the agent to immediately call `trigger_offline_quota_computation`.
+- On success (returncode 0), the agent summarizes the relevant stdout output.
+- On failure (non-zero returncode), the agent diagnoses the stderr/stdout, explains the error in plain English, and suggests fixes.
+- Follow-up questions in the same session continue in the same thread (no restart).
+- Typing `exit` or `quit` ends the session cleanly.
+
+Each CPLEX session writes two log files under `logs/test_cli/`:
+
+- `cplex_agent_YYYYMMDD_HHMMSS.log` — INFO and above.
+- `cplex_agent_YYYYMMDD_HHMMSS.debug.log` — DEBUG and above.
+
+Third-party library loggers are suppressed to `WARNING`. There is no workspace cloning or interrupt/resume logic in the CPLEX CLI.
 
 ## Test Files at a Glance
 

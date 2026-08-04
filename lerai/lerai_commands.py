@@ -13,6 +13,7 @@ from quota_exceed import check_query2_for_quota_exceed
 from promote import handle_promotion_request, handle_approval_request
 from leroy_overrides_writer import write_toml
 from cplex_runner import run_cplex_agent
+from diff_runner import run_diff_agent
 from lerai.logging_utils import log_user_request, redact_value
 
 
@@ -309,10 +310,33 @@ class TriggerCplexCommand(Command):
                 "activity": redact_value(activity),
             },
         )
-        return "✅ Initiating CPLEX debugging agent... please wait."
+        return "✅ CPLEX run is being triggered... please wait for 10-15 minutes."
 
     def execute(self, message, attachment_actions, activity):
         return run_cplex_agent(message, webex_message=activity)
+
+
+class DiffAnalystCommand(Command):
+    def __init__(self):
+        super().__init__(
+            command_keyword="/analyze_diff",
+            exact_command_keyword_match=False,
+            help_message="Analyze override TOML impact against pipeline CSV diffs",
+            card=None,
+        )
+
+    def pre_execute(self, message, attachment_actions, activity):
+        logger.info(
+            "Diff analyst request received",
+            extra={
+                "request_message": redact_value(message),
+                "activity": redact_value(activity),
+            },
+        )
+        return "✅ Diff Analyst is fetching and correlating pipeline data... please wait."
+
+    def execute(self, message, attachment_actions, activity):
+        return run_diff_agent(message, webex_message=activity)
 
 
 class SimulateDailyReport(Command):

@@ -20,6 +20,7 @@ The bot currently supports these broad categories:
 - Interactive LeROY override TOML generation with thread-aware pause/resume.
 - LeROY override-adjacent question answering through documentation search and infrastructure lookups.
 - CPLEX offline quota computation trigger and Airflow pipeline debugging via a dedicated LangGraph agent.
+- Diff Analyst promotion-gate analysis via a dedicated LangGraph agent.
 
 The code is mostly organized as one command router plus one module per workflow. There is no full application framework beyond the Webex bot library.
 
@@ -59,7 +60,8 @@ lerai/data/chroma_index/              Local persisted Chroma index for LeROY man
 lerai/overrides_pipeline/             Deterministic extraction/conflict/validation utilities used by the agent.
 lerai/netarch/                        Netarch database helpers and metro-region mapping exporter.
 lerai/prompts/                        Prompt templates used by LLM workflows.
-test_cli.py                           Local interactive CLI harness for the override agent.
+test_override_cli.py                  Local interactive CLI harness for the override agent.
+test_diff_cli.py                      Local one-shot CLI harness for the Diff Analyst agent.
 test_cplex_cli.py                     Local interactive CLI harness for the CPLEX agent.
 tests/                                No-server unit tests for payload and parser behavior.
 ```
@@ -82,6 +84,11 @@ Important modules under `lerai/`:
 | `lerai/promote.py` | Implements promotion request and approval token flow. |
 | `lerai/webex_presence.py` | Webex helper functions for presence, direct messages, spaces, and approver selection. |
 | `lerai/cplex_runner.py` | Bridges Webex command traffic to the CPLEX LangGraph app. Resolves the thread id, invokes the CPLEX graph, and sends the reply as a threaded Webex message (or returns the response string for CLI use). |
+| `lerai/diff_runner.py` | Bridges Webex command traffic to the Diff Analyst LangGraph app and returns the final markdown report. |
+| `lerai/diff_agent/state.py` | `DiffAgentState` schema carrying diff payloads, source context, timestamps, health flags, and final report text. |
+| `lerai/diff_agent/utils.py` | CSV unified-diff parsing/filtering utilities with threshold-based noise filtering for quota changes. |
+| `lerai/diff_agent/nodes.py` | Ingestion and correlation nodes. Builds branch-aware TOML diff, source metadata, timestamps, and deterministic promotion footer. |
+| `lerai/diff_agent/graph.py` | One-shot sequential LangGraph DAG: `ingest_and_filter` → `analyze_and_correlate`. |
 | `lerai/cplex_agent/state.py` | `CplexAgentState` TypedDict with a single `messages` field. |
 | `lerai/cplex_agent/tools.py` | Defines `trigger_offline_quota_computation` (extracted from `override_agent/tools.py`) and exports `CPLEX_TOOLS`. |
 | `lerai/cplex_agent/nodes.py` | `supervisor_node` for the CPLEX graph. Loads `lerai/prompts/cplex_agent_system_prompt.txt` at import time, binds the LLM to `CPLEX_TOOLS`, and reuses `_build_supervisor_llm` and `should_continue` from `override_agent/nodes.py`. |
@@ -95,7 +102,7 @@ Important modules under `lerai/`:
 | `lerai/overrides_pipeline/entity_extractor.py` | Uses LLM function/tool calling and optional Jira XML parsing to extract structured override intent. Deterministically extracts multiple ticket IDs (e.g., `LEROYOPS-61 LEROYOPS-99`) from user text, Jira context, or LLM output, deduplicating them while preserving order. Normalizes geographical scope values (maps region names to codes, converts `Region-default` global keywords, etc.). |
 | `lerai/overrides_pipeline/conflict_detector.py` | Parses `override.toml` with `tomlkit` and performs semantic conflict detection. It resolves cross-scope relationships (`Region-default` -> `Region-geo` -> `Region-country` -> `Region-metro` -> `Region-number`) using CSV mappings in `lerai/data/` (region numbers are normalized to underscore-joined metro names to align with entity-extractor output), validates requested map names against `lerai/data/maps.csv`, classifies map overlap (including all-map and partial overlap cases), compares same-key directive values across access/quota-style directives (not only `Access-control`), and performs full same-level set comparison to distinguish `EXACT_MATCH`, `SCOPE_1_IS_BROADER`, `SCOPE_1_IS_NARROWER`, and `SAME_LEVEL_PARTIAL` before returning structured conflict entries: `DIRECT_COLLISION`, `INEFFECTIVE`, `CARVE_OUT`, `DEAD_CODE`, `REDUNDANT`, and `PARTIAL_OVERLAP`. |
 | `lerai/overrides_pipeline/toml_generator.py` | Builds `[[override-records]]` stanzas via `tomlkit` and validates records with `jsonschema` against `override_schema.json`. Also exposes `execute_ast_update`, a deterministic "nuke and append" AST engine that iterates the `override-records` array backwards, set-compares each live record against target intents (scope key/values, directive key, and Mapnames normalized by casting every scalar to string, then trimming and lower-casing), deletes exact matches in place, and appends one or more new intents as fresh `tomlkit` tables. During delete, it preserves `override.toml` comments by transferring `tomlkit` comment/whitespace body entries from a deleted stanza to the nearest surviving stanza before removal, preventing comment loss and stanza-header drift. |
-| `lerai/git_workspace.py` | Implements `TransientGitWorkspace`, a stateless Git client that clones the config repo into an ephemeral checkout and provides `commit(...)`, `get_head_diff()`, and `push()` used by the override writer and the `commit_and_push_workspace` tool. |
+| `lerai/git_workspace.py` | Implements `TransientGitWorkspace`, a stateless Git client that clones the config repo into an ephemeral checkout and provides `commit(...)`, `get_head_diff()`, `get_diff_against_branch(...)`, `get_override_file_timestamps(...)`, and `push()`. |
 | `lerai/netarch/netarch.py` | Provides read/write Netarch connection helpers plus export utilities: `fetch_metro_region_mapping()` for region/metro mapping data and `fetch_maps()` for map shortname catalog generation in `lerai/data/maps.csv`. |
 | `lerai/scheduled_jobs.py` | Contains daily report jobs; scheduler registration is currently commented out. |
 | `lerai/mysql_client.py` | Opens MySQL connections and returns query results as CSV-like text. |
@@ -118,6 +125,13 @@ graph TD
     Router --> Quota[quota_exceed.py]
     Router --> Promote[promote.py]
     Router --> OverrideEntry[leroy_overrides_writer.py]
+    Router --> DiffRunner[diff_runner.py]
+    DiffRunner --> DiffGraph[diff_agent/graph.py]
+    DiffGraph --> DiffIngest[diff_agent/nodes.py ingest_and_filter]
+    DiffGraph --> DiffAnalyze[diff_agent/nodes.py analyze_and_correlate]
+    DiffIngest --> GitWS
+    DiffIngest --> InternalDiff
+    DiffAnalyze --> Azure
     OverrideEntry --> GitWS[git_workspace.py<br/>clones ephemeral repo<br/>per request]
     GitWS --> GitSSH{{"/tmp/leroy_config_test_UUID"}}
     OverrideEntry --> OverrideGraph[override_agent/graph.py]
@@ -236,6 +250,7 @@ sequenceDiagram
 Additional routing behavior in `lerai/lerai_main.py`:
 
 - If a user posts in an existing Webex thread without typing an explicit command, the bot fetches the root message of that thread from the Webex API to determine which agent owns it. Messages in `/trigger_cplex` threads are re-routed to `/trigger_cplex`; messages in `diff_offline_prod` threads to `diff_offline_prod`; all others default to `/write_override`.
+- `/analyze_diff` is a first-class command, but implicit thread auto-routing currently has explicit ownership checks only for `/trigger_cplex` and `diff_offline_prod`.
 
 ## Active Commands
 
@@ -252,6 +267,7 @@ Additional routing behavior in `lerai/lerai_main.py`:
 | `quota_exceed` | `QuotaExceedCommand` | `check_query2_for_quota_exceed()` | Reports fp-config or object-count quota exceedance. |
 | `/write_override` | `LeroyOverrideWriterCommand` | `write_toml()` | Runs the interactive override agent with conversation persistence, conflict checks, interrupt/resume, and threaded Webex replies. |
 | `/trigger_cplex` | `TriggerCplexCommand` | `run_cplex_agent()` | Triggers offline CPLEX quota computation via the CPLEX LangGraph agent, then analyzes stdout/stderr and explains results or failures. |
+| `/analyze_diff` | `DiffAnalystCommand` | `run_diff_agent()` | Runs the Diff Analyst DAG to correlate TOML changes with filtered CSV effects and output a promotion recommendation report. |
 
 Defined but not actively registered:
 
@@ -767,13 +783,13 @@ The most recent changes further changed the override architecture:
 - Added persistent graph checkpointing in `lerai_checkpoints.db` keyed by Webex thread id.
 - Updated `/write_override` to support interruption/resume across user turns in the same thread.
 - Improved Webex thread/room extraction with parent-id fallback and API verification paths.
-- Added `test_cli.py` as a local interactive harness for manual multi-turn testing of interrupts and resume behavior.
+- Added the local interactive override harness (now `test_override_cli.py`) for manual multi-turn testing of interrupts and resume behavior.
 - Added `lerai/override_agent/knowledge_base.py` to support hybrid LeROY manual retrieval using Chroma + BM25.
 - Added `search_leroy_documentation` and `lookup_infrastructure_data` as first-class supervisor tools for non-transactional override questions.
 - Updated `override_agent/nodes.py` to source its tool list from `SUPERVISOR_TOOLS` in `override_agent/tools.py`, keeping tool registration centralized.
 - Updated `override_agent/nodes.py` to log pretty-printed LLM request/response payloads at debug level, including nested JSON decoding for readability.
 - Updated `override_agent_supervisor_system_prompt.txt` to route conceptual questions, infrastructure lookups, schema-bound constraint questions, and transactional override requests to different tool paths.
-- Updated `test_cli.py` to write timestamped logs under `logs/test_cli/` instead of a single repo-root log file.
+- Updated the override CLI harness to write timestamped logs under `logs/test_cli/` instead of a single repo-root log file.
 - Added hybrid-retrieval dependencies to `requirements.txt` and ignored the generated `lerai/data/chroma_index/` directory in `.gitignore`.
 - Added `request_deployment_approval` in `lerai/override_agent/tools.py`, using LangGraph `interrupt(...)` to pause execution with a human-readable add/delete change preview and explicit approval prompt.
 - Updated `lerai/overrides_pipeline/toml_generator.py` so `execute_ast_update(...)` appends one or more intents (`new_intents`) instead of a single replacement record.
@@ -781,7 +797,7 @@ The most recent changes further changed the override architecture:
 - Updated `lerai/overrides_pipeline/conflict_detector.py` directive comparison to treat same-key, different-value directive pairs (including quota/object-count directives) as semantic conflicts.
 - Updated `lerai/overrides_pipeline/toml_generator.py` delete behavior to preserve comment blocks when nuking stanzas by transferring `tomlkit` raw comment/whitespace entries to surviving stanzas before in-place deletion.
 - Updated `lerai/prompts/override_agent_supervisor_system_prompt.txt` to enforce a draft-and-deploy pipeline with mandatory approval-gate tool usage, explicit approve/revise branching, and partial-overlap split-and-replace workflow.
-- Updated `test_cli.py` interrupt rendering to inspect graph task interrupts and print an approval-request banner with the exact deployment diff payload.
+- Updated the override CLI interrupt rendering to inspect graph task interrupts and print an approval-request banner with the exact deployment diff payload.
 
 Additional local branch updates reflected in this document:
 
@@ -812,6 +828,15 @@ Subsequent changes:
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `_load_csv_data` to normalize `region_to_metro` values with `.replace(" ", "_")` so region-number lookups resolve to underscore-joined metro names consistent with entity-extractor output.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `compare_scopes` same-level branch from a simple intersection check to a full set comparison, adding `SCOPE_1_IS_BROADER`, `SCOPE_1_IS_NARROWER`, and `SAME_LEVEL_PARTIAL` outcomes for same-level scopes.
 - Updated `lerai/overrides_pipeline/conflict_detector.py` `detect_conflicts` to handle `SAME_LEVEL_PARTIAL` as `PARTIAL_OVERLAP`, and added two new categorization branches: `SCOPE_1_IS_NARROWER + SAME` → `REDUNDANT` and `EXACT_MATCH + SAME` → `DEAD_CODE` (exact duplicate).
+
+Latest updates:
+
+- Added `lerai/diff_agent/` package (`state.py`, `utils.py`, `nodes.py`, `graph.py`) for Diff Analyst promotion-gate workflow.
+- Added `lerai/diff_runner.py` and `DiffAnalystCommand` (`/analyze_diff`) to bridge Webex command execution to the Diff Analyst LangGraph DAG.
+- Added `lerai/prompts/diff_analyst_system_prompt.txt` with strict report structure requirements, including source context and timestamp reporting.
+- Added `test_diff_cli.py` as a local one-shot CLI harness for Diff Analyst report generation.
+- Renamed the local override harness path used in docs from `test_cli.py` to `test_override_cli.py`.
+- Extended `TransientGitWorkspace` with `get_diff_against_branch(...)` and `get_override_file_timestamps(...)` for branch-aware TOML comparisons and offline/production timestamp extraction.
 
 Additional historical architecture notes are in `archive/`.
 

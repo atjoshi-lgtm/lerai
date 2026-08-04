@@ -24,7 +24,7 @@ Don't tell us about region's flitcap or disk space changes.
 Summarize the key changes in blc.csv, fcs.scv and expeced_offload.csv. Mention the offline and production last-mod times in the summaries.
 Skip mentioning any change in expected_offload.csv that directly corresponds to a change in blc and fcs.
 
-In the end, determine if the following conditions are true: (i) offline is not missing any maps for any region compared to production, (ii) offline is not missing any region that was in production, (iii) any changes in quota a re minimal. If yes, then print in the summary that you recommend promotion of offline to production. If any is not true, then mention which condition is making you withhold the promotion recommendation
+In the end, determine if the following conditions are true: (i) offline is not missing any maps for any region compared to production, (ii) offline is not missing any region that was in production, (iii) any changes in quota are minimal. If yes, then print in the summary that you recommend promotion of offline to production. If any is not true, then mention which condition is making you withhold the promotion recommendation
 Print a line in the end: "If you want to promote this output via LeRAI's promotion command, mention this token", and provide the token extracted from the json.
 Here's the data:
 

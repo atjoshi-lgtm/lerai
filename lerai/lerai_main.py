@@ -26,6 +26,7 @@ from lerai_commands import (
     ApproveCommand,
     LeroyOverrideWriterCommand,
     TriggerCplexCommand,
+    DiffAnalystCommand,
 )
 
 # Import scheduled jobs
@@ -170,6 +171,7 @@ def lerai_main():
     bot.add_command(QuotaExceedCommand())
     bot.add_command(LeroyOverrideWriterCommand())
     bot.add_command(TriggerCplexCommand())
+    bot.add_command(DiffAnalystCommand())
     #bot.add_command(SimulateDailyReport())
     #bot.add_command(SimulateDailyOffloadReport())
 

@@ -38,7 +38,7 @@ The override agent uses an interactive LangGraph with thread checkpointing and i
 
 ```bash
 source exports.sh
-python3 test_cli.py
+python3 test_override_cli.py
 ```
 
 If setting variables manually instead of sourcing `exports.sh`, set all required values:
@@ -48,7 +48,7 @@ export LEROY_GIT_REPO_URL=<your-git-repo>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
-python3 test_cli.py
+python3 test_override_cli.py
 ```
 
 What to verify manually:
@@ -82,6 +82,29 @@ Every log line includes the emitting module name (e.g. `lerai.override_agent.nod
 The `override_agent_*.log` files follow the same INFO/DEBUG split described above. The primary log shows user inputs, routing decisions, tool calls/results, and final responses; the debug log adds slim LLM request/response payloads and extractor diagnostics.
 
 Third-party library loggers (`httpx`, `httpcore`, `openai`) are suppressed to `WARNING` level so they do not appear in either log file. The CLI automatically creates a unique ephemeral workspace per session and cleans it up when the session ends (including on error).
+
+## Manual Diff Analyst Check
+
+Run the Diff Analyst harness:
+
+```bash
+source exports.sh
+python3 test_diff_cli.py
+```
+
+What to verify manually:
+
+- The CLI prints a unique session id prefixed `diff_cli_`.
+- The report includes a `## 🔎 Source Repositories` section with explicit repository and branch details for TOML and CSV inputs.
+- The report includes `## ⏱️ File Timestamps` with nested TOML and CSV offline vs production timestamps.
+- The report includes a deterministic promotion footer in the form `/promote @<approver_name> <token>`.
+
+Each Diff Analyst session writes two log files under `logs/test_cli/`:
+
+- `diff_agent_YYYYMMDD_HHMMSS.log` — INFO and above.
+- `diff_agent_YYYYMMDD_HHMMSS.debug.log` — DEBUG and above.
+
+Third-party loggers are suppressed to `WARNING` just like the other CLI harnesses.
 
 ## Manual Interactive CPLEX Agent Check
 
@@ -173,7 +196,7 @@ Why it matters: push errors must be surfaced with detail for troubleshooting.
 
 ### Note on current coverage
 
-`TransientGitWorkspace.get_head_diff()` is now part of the deployment path and returns the committed `HEAD` diff string used in the final success payload. If you extend Git workspace tests, include success and failure-path assertions for `git show --pretty=format: HEAD` output handling.
+`TransientGitWorkspace.get_head_diff()` is part of the deployment path and returns the committed `HEAD` diff string used in the final success payload. The Diff Analyst path additionally uses `get_diff_against_branch()` and `get_override_file_timestamps()` for branch-aware TOML comparison and offline/production timestamp extraction. If you extend Git workspace tests, include success and failure-path assertions for all three Git read paths.
 
 ## `tests/test_mapname_validation.py`
 

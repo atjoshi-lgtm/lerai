@@ -5,6 +5,7 @@ LeRAI is a Webex-based operational assistant for Large Region workflows.
 It provides command-driven workflows for:
 
 - offline vs production diff summarization,
+- offline vs production promotion-gate analysis through the Diff Analyst LangGraph agent,
 - Airflow error summarization,
 - expected vs observed offload analysis,
 - DP and FD question answering,
@@ -47,12 +48,32 @@ python3 -m compileall .
 Run the local override-agent CLI harness:
 
 ```bash
-python3 test_cli.py
+python3 test_override_cli.py
 ```
 
-The CLI now writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
+The override CLI writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
 
-Note: Running `test_cli.py` requires the Git environment variables to be set. The canonical source is `exports.sh`:
+Run the local Diff Analyst CLI harness:
+
+```bash
+python3 test_diff_cli.py
+```
+
+The Diff Analyst CLI runs a one-shot LangGraph DAG that:
+
+- compares local `override.toml` changes against production branch state,
+- extracts TOML and CSV timestamps,
+- captures source repository and branch provenance for offline and production inputs,
+- filters CSV unified diffs to focus on structural and significant changes,
+- generates a promotion recommendation report and deterministic `/promote` command footer.
+
+Run the local CPLEX CLI harness:
+
+```bash
+python3 test_cplex_cli.py
+```
+
+Note: Running these CLIs requires environment variables to be set. The canonical source is `exports.sh`:
 
 ```bash
 source exports.sh

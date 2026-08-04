@@ -134,6 +134,79 @@ class TransientGitWorkspace:
 
             return (completed.stdout or "").strip()
 
+    def get_diff_against_branch(self, target_branch: str = "origin/master") -> str:
+        with self._acquire_lock():
+            if not self.local_path.exists():
+                raise GitWorkspaceError(f"Workspace does not exist: {self.local_path}")
+
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=str(self.local_path),
+                env=self._build_env(),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            completed = subprocess.run(
+                ["git", "diff", target_branch, "HEAD", "--", "override.toml"],
+                cwd=str(self.local_path),
+                env=self._build_env(),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                stderr = (completed.stderr or "").strip()
+                stdout = (completed.stdout or "").strip()
+                message = f"git diff {target_branch} HEAD -- override.toml failed"
+                if stderr:
+                    message = f"{message}: {stderr}"
+                elif stdout:
+                    message = f"{message}: {stdout}"
+                raise GitWorkspaceError(message)
+
+            return (completed.stdout or "").strip()
+
+    def get_override_file_timestamps(self, target_branch: str = "origin/master") -> dict[str, str]:
+        with self._acquire_lock():
+            if not self.local_path.exists():
+                raise GitWorkspaceError(f"Workspace does not exist: {self.local_path}")
+
+            def _run_timestamp_command(ref: str) -> str:
+                completed = subprocess.run(
+                    ["git", "log", "-1", "--format=%cI", ref, "--", "override.toml"],
+                    cwd=str(self.local_path),
+                    env=self._build_env(),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if completed.returncode != 0:
+                    stderr = (completed.stderr or "").strip()
+                    stdout = (completed.stdout or "").strip()
+                    message = f"git log -1 --format=%cI {ref} -- override.toml failed"
+                    if stderr:
+                        message = f"{message}: {stderr}"
+                    elif stdout:
+                        message = f"{message}: {stdout}"
+                    raise GitWorkspaceError(message)
+                return (completed.stdout or "").strip() or "Unknown"
+
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=str(self.local_path),
+                env=self._build_env(),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            return {
+                "offline_last_modified": _run_timestamp_command("HEAD"),
+                "production_last_modified": _run_timestamp_command(target_branch),
+            }
+
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         env["GIT_SSH_COMMAND"] = f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"

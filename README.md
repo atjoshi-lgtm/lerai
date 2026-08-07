@@ -13,12 +13,25 @@ It provides command-driven workflows for:
 - promotion request/approval flow,
 - interactive LeROY override TOML generation through a thread-aware agent that writes flat TOML records,
 - approval-gated override deployment previews with explicit add/delete stanza review and split-and-replace guidance for partial overlaps,
-- approval-gated override deployment results that include the exact committed Git diff from `HEAD`,
-- post-push offline quota computation trigger over SSH with captured stdout/stderr diagnostics,
+- approval-gated override deployment through an mTLS-authenticated LeROY API with optimistic-concurrency tokens,
+- standalone post-deployment offline quota computation through the CPLEX LangGraph agent,
 - semantic override conflict classification with scope-aware warnings and explicit replace/add guidance,
 - LeROY documentation search and infrastructure lookup for override-related questions.
 
-The override conflict pipeline always evaluates against the absolute latest production state by using an ephemeral Git workspace cloned per request. Each request generates a unique temporary directory, clones the Git repository there, and evaluates conflict detection against the cloned `override.toml`. The workspace is deleted after the request completes, ensuring fresh production state is never stale.
+## Override Architecture Status
+
+The override path is currently in a hybrid migration state.
+
+- The override supervisor now fetches live override state from `OVERRIDE_TOKEN_URL` and captures a `base_override_token` for optimistic concurrency.
+- Conflict detection runs against the TOML returned by that API, not against a repo-local `override.toml` file.
+- After approval, the supervisor applies the add/delete plan in memory and submits the final TOML to `RUN_OFFLINE_OVERRIDE_URL` over mTLS using `CERT_PATH` and `KEY_PATH`.
+- The deployment response is compacted for the LLM context, but still preserves success status, return code, and the offline token when one is returned.
+
+Some orchestration still reflects the older Git-backed model:
+
+- `lerai/leroy_overrides_writer.py` and `test_override_cli.py` still create a transient Git workspace per request/session.
+- That workspace is currently migration scaffolding and is no longer the source of truth for override conflict detection or deployment submission.
+- Diff Analyst and other Git-oriented workflows still use `TransientGitWorkspace` directly.
 
 The override conflict pipeline also uses hierarchical geography mappings from `lerai/data/` (including metro, country, and geo relationships) to detect direct collisions, carve-outs, ineffective broad rules, dead-code overlap, partial map overlap, and partial geographic overlap. The writer now normalizes nested intent payloads before TOML generation so override records stay flat in the generated file.
 
@@ -52,6 +65,7 @@ python3 test_override_cli.py
 ```
 
 The override CLI writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
+The current supervisor logic no longer reads live override state from that workspace; it fetches live TOML and deploy tokens from the override API.
 
 Run the local Diff Analyst CLI harness:
 
@@ -82,12 +96,19 @@ source exports.sh
 If you need to set them manually, provide all required Git workspace values:
 
 ```bash
+export CERT_PATH=<path-to-client-cert>
+export KEY_PATH=<path-to-client-key>
+export OVERRIDE_TOKEN_URL=<override-token-endpoint>
+export RUN_OFFLINE_OVERRIDE_URL=<offline-override-endpoint>
+export RUN_OFFLINE_OVERRIDE_TIMEOUT_SEC=<optional-timeout-seconds>
+
+# Transitional Git workspace settings still used by the Webex/CLI bridge
 export LEROY_GIT_REPO_URL=<your-repo-url>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OVERRIDE_TOML_RELATIVE_PATH=<path-inside-cloned-repo>
 
-# Required when testing the post-push offline quota trigger path
+# Required when testing the standalone CPLEX/offline trigger path
 export LEROY_OFFLINE_REMOTE_HOST=<user@cplex-host>
 export LEROY_OFFLINE_SSH_KEY_PATH=<path-to-ssh-key>
 export LEROY_OFFLINE_REPO_DIR=<remote-leroy-config-repo-dir>

@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import ast
 import csv
 import json
-import os
 import pathlib
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import tomlkit
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 
+from langgraph.prebuilt import InjectedState, ToolRuntime
+
+from lerai.api_clients.override_api import fetch_override_and_token, submit_offline_override
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
-from lerai.git_workspace import TransientGitWorkspace
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
 from lerai.overrides_pipeline.toml_generator import (
     build_toml_string,
@@ -27,27 +30,6 @@ _PROJECT_ROOT = PROJECT_ROOT
 DATA_DIR = pathlib.Path(PROJECT_ROOT) / "lerai" / "data"
 OVERRIDE_SCHEMA_PATH = PROJECT_ROOT / "override_schema.json"
 SCHEMA_PATH = _PROJECT_ROOT / "lerai" / "prompts" / "leroy_override_entity_extractor_tool.json"
-
-
-def _get_override_toml_relative_path() -> Path:
-    """Returns the override TOML path inside the cloned repo from environment config."""
-    configured_path = os.environ.get("LEROY_OVERRIDE_TOML_RELATIVE_PATH")
-    if not configured_path:
-        raise ValueError("Missing required environment variable: LEROY_OVERRIDE_TOML_RELATIVE_PATH")
-    return Path(configured_path)
-
-
-def _load_override_toml_read_only(workspace_path: str) -> str:
-    """Reads override.toml in read-only mode; never writes to disk."""
-    if not workspace_path:
-        raise ValueError("workspace_path is required but was not provided.")
-
-    toml_path = Path(workspace_path) / _get_override_toml_relative_path()
-    if not toml_path.exists():
-        raise FileNotFoundError(
-            f"override.toml not found in cloned workspace: {workspace_path}"
-        )
-    return toml_path.read_text(encoding="utf-8")
 
 
 def _load_override_schema() -> dict[str, Any]:
@@ -74,13 +56,18 @@ def extract_override_intent(synthesized_request: str) -> str:
 
 
 @tool
-def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[str, Any]:
+def detect_override_conflicts(
+    intent_json: str,
+    runtime: ToolRuntime,
+    config: RunnableConfig,
+) -> Command:
     """
     STEP 3 TOOL. Pass the JSON string output from extract_override_intent here.
     Reads override.toml and detects if this new intent conflicts with live records.
     """
+    del config
     try:
-        workspace_path = config.get("configurable", {}).get("workspace_path")
+        token, current_toml = fetch_override_and_token()
         new_intent = json.loads(intent_json)
         invalid_mapnames = find_invalid_mapnames(new_intent)
         warnings: list[str] = []
@@ -96,16 +83,26 @@ def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[
             message = new_intent["error"]
             if warnings:
                 message = f"{message} Warning: {' '.join(warnings)}"
-            return {
+            response_dict = {
                 "has_conflict": False,
                 "message": message,
                 "conflicts": [],
+                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
+            tool_message = ToolMessage(
+                content=json.dumps(response_dict),
+                tool_call_id=runtime.tool_call_id or "",
+            )
+            return Command(
+                update={
+                    "base_override_token": token,
+                    "live_override_toml": current_toml,
+                    "messages": [tool_message],
+                },
+            )
             
-        current_toml = _load_override_toml_read_only(workspace_path)
-
         # Call the upgraded semantic conflict detector
         found_conflicts = detect_conflicts(new_intent, current_toml)
 
@@ -118,30 +115,56 @@ def detect_override_conflicts(intent_json: str, config: RunnableConfig) -> dict[
             status_message = f"{status_message} Warning: {' '.join(warnings)}"
         
         if found_conflicts:
-            return {
+            response_dict = {
                 "has_conflict": True,
                 "conflicts": found_conflicts,
                 "message": status_message,
+                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
         else:
-            return {
+            response_dict = {
                 "has_conflict": False,
                 "message": status_message,
                 "conflicts": [],
+                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
 
+        tool_message = ToolMessage(
+            content=json.dumps(response_dict),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(
+            update={
+                "base_override_token": token,
+                "live_override_toml": current_toml,
+                "messages": [tool_message],
+            },
+        )
+
     except Exception as exc:
-        return {
+        response_dict = {
             "has_conflict": False,
             "message": f"Conflict detection failed: {exc}",
             "conflicts": [],
+            "live_override_toml": "",
             "warnings": [],
             "invalid_mapnames": [],
         }
+        tool_message = ToolMessage(
+            content=json.dumps(response_dict),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(
+            update={
+                "base_override_token": "",
+                "live_override_toml": "",
+                "messages": [tool_message],
+            },
+        )
 
 @tool
 def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:
@@ -396,8 +419,12 @@ def _load_conflict_rules() -> dict[str, Any]:
 
 @tool
 def apply_override_to_workspace(
-    new_intents_json: str, target_intents_json: str, config: RunnableConfig
-) -> dict[str, Any]:
+    new_intents_json: str,
+    target_intents_json: str,
+    live_override_toml: Annotated[str, InjectedState("live_override_toml")],
+    config: RunnableConfig,
+    runtime: ToolRuntime,
+) -> Command:
     """
     STEP 6 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
     Reads the live override.toml from the workspace, nukes any target records, appends one or more
@@ -407,6 +434,8 @@ def apply_override_to_workspace(
     - A single JSON object (backward-compatible), or
     - A JSON list of objects for multi-stanza append.
     """
+    del config
+
     def _flatten_intent(intent: dict[str, Any]) -> dict[str, Any]:
         """Flattens nested JSON payloads into a flat dictionary for TOML."""
         flat = {}
@@ -511,65 +540,100 @@ def apply_override_to_workspace(
                 extracted = item
             target_intents.append(_flatten_intent(extracted))
 
-        workspace_path = config.get("configurable", {}).get("workspace_path")
-        if not workspace_path or not Path(workspace_path).is_dir():
-            raise ValueError(
-                f"Invalid or missing workspace_path: {workspace_path!r}"
-            )
-
-        toml_path = Path(workspace_path) / _get_override_toml_relative_path()
-        if not toml_path.exists():
-            raise FileNotFoundError(
-                f"override.toml not found in workspace: {workspace_path}"
-            )
-
-        doc = tomlkit.parse(toml_path.read_text(encoding="utf-8"))
+        doc = tomlkit.parse(live_override_toml)
         conflict_rules = _load_conflict_rules()
 
         doc = execute_ast_update(doc, target_intents, new_intents, conflict_rules)
 
-        toml_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
-
-        return {
-            "ok": True,
-            "message": "Successfully applied updates to workspace override.toml.",
-        }
+        updated_toml = tomlkit.dumps(doc)
+        tool_message = ToolMessage(
+            content=json.dumps({"ok": True, "message": "Successfully applied updates in-memory."}),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(
+            update={"draft_toml": updated_toml, "messages": [tool_message]},
+        )
     except Exception as exc:
-        return {"ok": False, "error": f"Failed to apply overrides to disk: {exc}"}
+        tool_message = ToolMessage(
+            content=json.dumps({"ok": False, "error": f"Failed to apply overrides in-memory: {exc}"}),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(
+            update={"messages": [tool_message]},
+        )
+
+
+def _compact_deploy_result(response: dict[str, Any]) -> dict[str, Any]:
+    """Reduce deploy payload to minimal fields for LLM context safety."""
+    raw_success = response.get("success")
+    if isinstance(raw_success, bool):
+        success = raw_success
+    elif isinstance(raw_success, str):
+        success = raw_success.strip().lower() == "true"
+    else:
+        success = bool(raw_success)
+
+    token: str | None = None
+    offline_diff = response.get("offline_diff")
+    if isinstance(offline_diff, str):
+        try:
+            parsed_diff = ast.literal_eval(offline_diff)
+            if isinstance(parsed_diff, dict):
+                maybe_token = parsed_diff.get("token")
+                if maybe_token is not None:
+                    token = str(maybe_token)
+        except (ValueError, SyntaxError):
+            token = None
+    elif isinstance(offline_diff, dict):
+        maybe_token = offline_diff.get("token")
+        if maybe_token is not None:
+            token = str(maybe_token)
+
+    if token is None:
+        top_level_token = response.get("token") or response.get("override_token")
+        if top_level_token is not None:
+            token = str(top_level_token)
+
+    compact_payload: dict[str, Any] = {
+        "ok": success,
+        "success": success,
+        "returncode": response.get("returncode"),
+    }
+    if token is not None:
+        compact_payload["offline_token"] = token
+
+    return compact_payload
 
 
 @tool
-def commit_and_push_workspace(
-    ticket_id: str, commit_message: str, config: RunnableConfig
-) -> dict[str, Any]:
-    """
-    STEP 7 TOOL. Use this tool ONLY after successfully applying the override to the workspace.
-    Commits the file changes and pushes them to the remote repository.
-    """
+def deploy_and_trigger_offline_computation(
+    runtime: ToolRuntime,
+    draft_toml: Annotated[str, InjectedState("draft_toml")],
+    base_override_token: Annotated[str, InjectedState("base_override_token")],
+) -> Command:
+    """Submit the drafted override TOML and trigger offline computation deployment."""
     try:
-        workspace_path = config.get("configurable", {}).get("workspace_path")
-        if not workspace_path or not Path(workspace_path).is_dir():
-            raise ValueError(
-                f"Invalid or missing workspace_path: {workspace_path!r}"
-            )
-
-        workspace = TransientGitWorkspace(local_path=workspace_path)
-        workspace.commit(
-            user_name="LeRAI Bot",
-            user_email="lerai-bot@akamai.com",
-            ticket_id=ticket_id,
-            commit_message=commit_message,
+        response = submit_offline_override(
+            updated_toml=draft_toml,
+            base_token=base_override_token,
         )
-        git_diff = workspace.get_head_diff()
-        workspace.push()
-
-        return {
-            "ok": True,
-            "message": "Successfully committed and pushed changes to remote repository.",
-            "diff": git_diff,
-        }
+        compact_response = _compact_deploy_result(response)
+        tool_message = ToolMessage(
+            content=json.dumps(compact_response),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(update={"messages": [tool_message]})
     except Exception as exc:
-        return {"ok": False, "error": f"Failed to commit and push: {exc}"}
+        tool_message = ToolMessage(
+            content=json.dumps(
+                {
+                    "ok": False,
+                    "error": f"Failed to deploy and trigger computation: {exc}",
+                }
+            ),
+            tool_call_id=runtime.tool_call_id or "",
+        )
+        return Command(update={"messages": [tool_message]})
 
 
 @tool
@@ -611,5 +675,5 @@ SUPERVISOR_TOOLS = [
     lookup_directive_schema,
     request_deployment_approval,
     apply_override_to_workspace,
-    commit_and_push_workspace,
+    deploy_and_trigger_offline_computation,
 ]

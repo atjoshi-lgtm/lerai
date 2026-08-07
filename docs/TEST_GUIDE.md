@@ -34,7 +34,7 @@ The local environment uses `python3`; `python` may not be available on the PATH.
 
 ## Manual Interactive Override-Agent Check
 
-The override agent uses an interactive LangGraph with thread checkpointing and interrupt/resume behavior. The bot always evaluates conflict detection against fresh production state using an ephemeral cloned workspace (same as production). In addition to unit tests, run the local CLI harness for a quick manual sanity check:
+The override agent uses an interactive LangGraph with thread checkpointing and interrupt/resume behavior. Its current live-read and deploy path is API-backed: it fetches the current override body plus a concurrency token from `OVERRIDE_TOKEN_URL`, then submits the final TOML to `RUN_OFFLINE_OVERRIDE_URL` over mTLS. In addition to unit tests, run the local CLI harness for a quick manual sanity check:
 
 ```bash
 source exports.sh
@@ -44,6 +44,13 @@ python3 test_override_cli.py
 If setting variables manually instead of sourcing `exports.sh`, set all required values:
 
 ```bash
+export CERT_PATH=<path-to-client-cert>
+export KEY_PATH=<path-to-client-key>
+export OVERRIDE_TOKEN_URL=<override-token-endpoint>
+export RUN_OFFLINE_OVERRIDE_URL=<offline-override-endpoint>
+export RUN_OFFLINE_OVERRIDE_TIMEOUT_SEC=<optional-timeout-seconds>
+
+# Transitional bridge settings still used by the CLI entry point
 export LEROY_GIT_REPO_URL=<your-git-repo>
 export LEROY_GIT_BRANCH=<your-branch>
 export LEROY_GIT_SSH_KEY_PATH=<path-to-ssh-key>
@@ -54,7 +61,7 @@ python3 test_override_cli.py
 What to verify manually:
 
 - The CLI prints a unique session thread id.
-- The CLI creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory and clones the repo there.
+- The CLI creates an ephemeral `/tmp/leroy_config_test_<UUID>` directory and clones the repo there as transitional scaffolding.
 - The assistant can ask a follow-up clarification when needed.
 - A follow-up answer resumes the same graph session (instead of restarting).
 - Interrupt/pause prompts are surfaced clearly and can be resumed with the next reply.
@@ -63,14 +70,21 @@ What to verify manually:
 - A plain threaded follow-up message (without retyping `/write_override`) continues the same override flow.
 - Requests that span multiple geographical scopes (e.g., "remove mm2 from France and North America") produce two separate TOML stanzas without requiring user clarification.
 - Requests that combine multiple scopes and multiple directives produce one generated stanza per scope/directive combination.
-- **Conflict checks always read from the cloned workspace path configured by `LEROY_OVERRIDE_TOML_RELATIVE_PATH`, not the local project root.**
+- Conflict checks fetch live TOML from `OVERRIDE_TOKEN_URL` and store the returned `base_override_token` in graph state.
+- Successful deploys submit the in-memory draft TOML plus `base_override_token` to `RUN_OFFLINE_OVERRIDE_URL`.
 - Conflict checks return actionable warning context (for example: direct collision vs carve-out) alongside generated TOML output.
 - Conflict checks also surface map-name validation warnings for unknown map shortnames.
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
-- Successful deployment responses include the committed Git diff payload from `HEAD` (returned by `commit_and_push_workspace`).
+- Successful deployment responses surface compact API results, including success status, return code, and offline token when present.
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
+
+Important migration note:
+
+- The CLI still provisions a transient Git workspace because the Webex/CLI bridge has not been fully simplified yet.
+- The current override supervisor does not read live override state from that checkout during conflict detection or deployment submission.
+- Keep the Git variables available for now, but treat the API endpoints as the authoritative override path.
 
 Each session writes **two simultaneous log files** under `logs/test_cli/`, sharing the same timestamp:
 
@@ -150,6 +164,8 @@ Third-party library loggers are suppressed to `WARNING`. There is no workspace c
 | `tests/test_leroy_overrides_writer_query_cases.py` | Verifies end-to-end TOML generation output matches fixture-driven query cases. |
 | `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
 | `tests/test_mapname_validation.py` | Verifies map-name validation against `lerai/data/maps.csv` and warning payload fields returned by `detect_override_conflicts`. |
+| `tests/test_override_api.py` | Verifies API deploy timeout behavior for `submit_offline_override()`. |
+| `tests/test_override_agent_tools.py` | Verifies deploy-result compaction, especially extraction of the offline token from API payloads. |
 
 ## `tests/test_git_workspace.py`
 

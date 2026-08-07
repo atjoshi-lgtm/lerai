@@ -24,14 +24,15 @@ Project summary:
 Key areas and ownership boundaries:
 - lerai/lerai_main.py: Webex bot startup and command registration.
 - lerai/lerai_commands.py: Command classes and dispatch behavior.
-- lerai/leroy_overrides_writer.py: Override orchestration entry point.
-- lerai/override_agent/tools.py: LangGraph supervisor tools, including the workspace deployment tools `apply_override_to_workspace` (STEP 6) and `commit_and_push_workspace` (STEP 7, now returns the committed Git diff payload on success). The internal `_parse_payload` helper now unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents. `trigger_offline_quota_computation` was extracted to `lerai/cplex_agent/tools.py`.
+- lerai/leroy_overrides_writer.py: Override orchestration entry point. It still provisions a transient Git workspace per request, but the current supervisor no longer uses that workspace as the source of truth for live override state.
+- lerai/api_clients/override_api.py: mTLS-backed LeROY override API client. Fetches the current override body plus optimistic-concurrency token and submits the final TOML for deployment/offline execution.
+- lerai/override_agent/tools.py: LangGraph supervisor tools, including `detect_override_conflicts` (now seeded from live API state), `apply_override_to_workspace` (in-memory AST mutation of the fetched TOML), and `deploy_and_trigger_offline_computation` (API-backed deploy step). The internal `_parse_payload` helper unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents.
 - lerai/cplex_agent/: Standalone LangGraph agent for CPLEX offline quota computation. Contains `state.py` (`CplexAgentState`), `tools.py` (`trigger_offline_quota_computation`, `CPLEX_TOOLS`), `nodes.py` (`supervisor_node`), and `graph.py` (singleton `get_compiled_graph()` sharing `lerai_checkpoints.db` with the override agent).
 - lerai/cplex_runner.py: Bridges Webex bot traffic to the CPLEX agent (thread-id resolution, graph invoke, threaded reply).
 - lerai/overrides_pipeline/entity_extractor.py: Structured intent extraction and normalization.
 - lerai/overrides_pipeline/conflict_detector.py: Conflict checks against existing override records.
 - lerai/overrides_pipeline/toml_generator.py: TOML stanza creation, schema validation, and the deterministic `execute_ast_update` nuke-and-append AST engine that mutates a parsed `override.toml` document.
-- lerai/git_workspace.py: Transient Git workspace wrapper (`TransientGitWorkspace`) used to clone, commit, push, and fetch the latest committed diff (`get_head_diff`) from the ephemeral override.toml checkout.
+- lerai/git_workspace.py: Transient Git workspace wrapper (`TransientGitWorkspace`) still used by Diff Analyst and by transitional override-entry scaffolding.
 - lerai/config.py: Shared environment parsing/validation helpers.
 - lerai/logging_utils.py: Logging redaction and safe logging helpers.
 - openai_agent/openai_agent_client.py: Azure OpenAI request construction and HTTP calls.
@@ -110,6 +111,10 @@ Baseline validation commands:
 Targeted validation by area:
 - Override pipeline normalization:
   python3 -m unittest tests.test_entity_extractor_normalization
+- Override API client behavior:
+  python3 -m unittest tests.test_override_api
+- Override deploy result compaction:
+  python3 -m unittest tests.test_override_agent_tools
 - Override generation query cases:
   python3 -m unittest tests.test_leroy_overrides_writer_query_cases
 - Override conflict behavior:

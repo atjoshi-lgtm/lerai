@@ -47,6 +47,7 @@ _debug_handler.setLevel(logging.DEBUG)
 _debug_handler.setFormatter(_fmt)
 _root_logger = logging.getLogger()
 _root_logger.setLevel(logging.DEBUG)
+_root_logger.handlers.clear()
 _root_logger.addHandler(_info_handler)
 _root_logger.addHandler(_debug_handler)
 # Suppress verbose third-party debug output that produces unreadable single-line dumps

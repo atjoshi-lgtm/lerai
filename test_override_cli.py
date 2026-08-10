@@ -139,7 +139,7 @@ def main() -> int:
     request_uuid = uuid.uuid4().hex
     workspace_path = f"/tmp/leroy_config_test_{request_uuid}"
     thread_id = f"cli_test_{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id, "workspace_path": workspace_path}}
+    config = {"configurable": {"thread_id": thread_id, "workspace_path": workspace_path}, "max_concurrency": 1}
 
     required_env = [
         "AZURE_OPENAI_URL",

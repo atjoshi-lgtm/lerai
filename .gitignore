@@ -223,3 +223,5 @@ archive/
 **/*.db*
 
 lerai/data/chroma_index
+
+logs/

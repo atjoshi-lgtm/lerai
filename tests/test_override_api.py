@@ -55,6 +55,42 @@ class SubmitOfflineOverrideTimeoutTests(unittest.TestCase):
 
         self.assertEqual(mock_post.call_args.kwargs["timeout"], 900.0)
 
+    @patch("lerai.api_clients.override_api.requests.post")
+    def test_raises_upstream_error_for_structured_failure_payload(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "success": False,
+            "returncode": 1,
+            "offline_run_errors": [
+                "An error occurred: FCS API returned status code 500 with message: <html>"
+            ],
+            "offline_run_log": "...",
+        }
+        mock_post.return_value = response
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Offline override failed upstream \(returncode=1\): An error occurred: FCS API returned status code 500",
+        ):
+            submit_offline_override("[[override-records]]", "token-4")
+
+    @patch("lerai.api_clients.override_api.requests.post")
+    def test_returns_structured_success_payload_without_stdout(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "success": True,
+            "returncode": 0,
+            "offline_diff": {"token": "abc123"},
+        }
+        mock_post.return_value = response
+
+        parsed = submit_offline_override("[[override-records]]", "token-5")
+
+        self.assertTrue(parsed["success"])
+        self.assertEqual(parsed["returncode"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

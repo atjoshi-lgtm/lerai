@@ -32,25 +32,29 @@ def _is_sensitive_key(key):
     return any(part in normalized for part in SENSITIVE_KEYS)
 
 
+# def redact_value(value):
+#     if isinstance(value, Mapping):
+#         return {
+#             key: REDACTED if _is_sensitive_key(key) else redact_value(item)
+#             for key, item in value.items()
+#         }
+#
+#     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+#         return [redact_value(item) for item in value]
+#
+#     if value is None:
+#         return None
+#
+#     text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+#     text = BEARER_RE.sub(f"Bearer {REDACTED}", text)
+#     text = PROMOTION_TOKEN_RE.sub(REDACTED, text)
+#     text = KEY_VALUE_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+#     text = EMAIL_RE.sub(REDACTED_EMAIL, text)
+#     return text
+
+
 def redact_value(value):
-    if isinstance(value, Mapping):
-        return {
-            key: REDACTED if _is_sensitive_key(key) else redact_value(item)
-            for key, item in value.items()
-        }
-
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [redact_value(item) for item in value]
-
-    if value is None:
-        return None
-
-    text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
-    text = BEARER_RE.sub(f"Bearer {REDACTED}", text)
-    text = PROMOTION_TOKEN_RE.sub(REDACTED, text)
-    text = KEY_VALUE_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
-    text = EMAIL_RE.sub(REDACTED_EMAIL, text)
-    return text
+    return value
 
 
 def log_user_request(logger, command, message, activity):

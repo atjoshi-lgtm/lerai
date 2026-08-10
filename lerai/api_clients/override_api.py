@@ -60,6 +60,36 @@ def _safe_json_payload(response: requests.Response) -> Any | None:
         return None
 
 
+def _coerce_success_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def _looks_like_offline_result(payload: dict[str, Any]) -> bool:
+    return any(
+        key in payload
+        for key in ("success", "returncode", "offline_run_errors", "offline_run_log", "stdout")
+    )
+
+
+def _build_upstream_failure_message(payload: dict[str, Any]) -> str:
+    errors = payload.get("offline_run_errors")
+    if isinstance(errors, list):
+        error_text = "; ".join(str(item) for item in errors if item is not None)
+    elif errors is None:
+        error_text = ""
+    else:
+        error_text = str(errors)
+
+    returncode = payload.get("returncode")
+    if error_text:
+        return f"Offline override failed upstream (returncode={returncode}): {error_text}"
+    return f"Offline override failed upstream (returncode={returncode})."
+
+
 def _request_certs() -> Tuple[str, str]:
     cert_path = os.environ.get("CERT_PATH")
     key_path = os.environ.get("KEY_PATH")
@@ -146,13 +176,30 @@ def submit_offline_override(updated_toml: str, base_token: str) -> dict[str, Any
         response.raise_for_status()
 
         payload = response.json()
-        stdout = payload.get("stdout", "")
-        if not isinstance(stdout, str):
-            raise TypeError("offline override response field 'stdout' must be a string")
+        if not isinstance(payload, dict):
+            raise TypeError("offline override response payload must be a dictionary")
 
-        parsed_stdout = ast.literal_eval(stdout.strip())
-        if not isinstance(parsed_stdout, dict):
-            raise TypeError("offline override stdout must parse to a dictionary")
+        stdout_value = payload.get("stdout")
+        parsed_stdout: dict[str, Any]
+
+        if isinstance(stdout_value, str) and stdout_value.strip():
+            try:
+                maybe_parsed = ast.literal_eval(stdout_value.strip())
+            except (ValueError, SyntaxError) as exc:
+                if _looks_like_offline_result(payload):
+                    raise ValueError(_build_upstream_failure_message(payload)) from exc
+                raise
+            if not isinstance(maybe_parsed, dict):
+                raise TypeError("offline override stdout must parse to a dictionary")
+            parsed_stdout = maybe_parsed
+        elif _looks_like_offline_result(payload):
+            # Some endpoints return the final structured result directly (without stdout wrapping).
+            parsed_stdout = payload
+        else:
+            raise TypeError("offline override response is missing parseable stdout payload")
+
+        if not _coerce_success_flag(parsed_stdout.get("success", True)):
+            raise ValueError(_build_upstream_failure_message(parsed_stdout))
 
         logger.info(
             "Parsed offline override response payload",

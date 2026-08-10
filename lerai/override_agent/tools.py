@@ -52,22 +52,58 @@ def extract_override_intent(synthesized_request: str) -> str:
         intent_dict = extract_intent(synthesized_request)
         return json.dumps(intent_dict)
     except Exception as exc:
-        return json.dumps({"error": f"Failed to extract intent: {exc}"})
+        return json.dumps({"ok": False, "error_type": "ExtractionError", "details": str(exc)})
+
+
+@tool
+def refresh_live_override_snapshot(runtime: ToolRuntime) -> Command:
+    """STEP 3 TOOL. Use this tool exactly once per editing session BEFORE checking conflicts. It fetches the latest live override.toml and concurrency token from the server."""
+    try:
+        token, current_toml = fetch_override_and_token()
+        return Command(
+            update={
+                "base_override_token": token,
+                "live_override_toml": current_toml,
+                "messages": [
+                    ToolMessage(
+                        content="Successfully fetched live override snapshot.",
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ],
+            }
+        )
+    except Exception as exc:
+        error_payload = {
+            "ok": False,
+            "error_type": "FetchError",
+            "details": str(exc),
+        }
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(error_payload),
+                        tool_call_id=runtime.tool_call_id or "",
+                    )
+                ]
+            }
+        )
 
 
 @tool
 def detect_override_conflicts(
     intent_json: str,
-    runtime: ToolRuntime,
-    config: RunnableConfig,
-) -> Command:
+    live_override_toml: Annotated[str, InjectedState("live_override_toml")],
+) -> str:
     """
     STEP 3 TOOL. Pass the JSON string output from extract_override_intent here.
     Reads override.toml and detects if this new intent conflicts with live records.
     """
-    del config
     try:
-        token, current_toml = fetch_override_and_token()
+        if not live_override_toml:
+            raise RuntimeError(
+                "Missing live override snapshot. Run refresh_live_override_snapshot before detect_override_conflicts."
+            )
         new_intent = json.loads(intent_json)
         invalid_mapnames = find_invalid_mapnames(new_intent)
         warnings: list[str] = []
@@ -87,24 +123,13 @@ def detect_override_conflicts(
                 "has_conflict": False,
                 "message": message,
                 "conflicts": [],
-                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
-            tool_message = ToolMessage(
-                content=json.dumps(response_dict),
-                tool_call_id=runtime.tool_call_id or "",
-            )
-            return Command(
-                update={
-                    "base_override_token": token,
-                    "live_override_toml": current_toml,
-                    "messages": [tool_message],
-                },
-            )
+            return json.dumps(response_dict)
             
         # Call the upgraded semantic conflict detector
-        found_conflicts = detect_conflicts(new_intent, current_toml)
+        found_conflicts = detect_conflicts(new_intent, live_override_toml)
 
         status_message = (
             f"Detected {len(found_conflicts)} potential conflict(s)."
@@ -119,7 +144,6 @@ def detect_override_conflicts(
                 "has_conflict": True,
                 "conflicts": found_conflicts,
                 "message": status_message,
-                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
@@ -128,43 +152,13 @@ def detect_override_conflicts(
                 "has_conflict": False,
                 "message": status_message,
                 "conflicts": [],
-                "live_override_toml": current_toml,
                 "warnings": warnings,
                 "invalid_mapnames": invalid_mapnames,
             }
-
-        tool_message = ToolMessage(
-            content=json.dumps(response_dict),
-            tool_call_id=runtime.tool_call_id or "",
-        )
-        return Command(
-            update={
-                "base_override_token": token,
-                "live_override_toml": current_toml,
-                "messages": [tool_message],
-            },
-        )
+        return json.dumps(response_dict)
 
     except Exception as exc:
-        response_dict = {
-            "has_conflict": False,
-            "message": f"Conflict detection failed: {exc}",
-            "conflicts": [],
-            "live_override_toml": "",
-            "warnings": [],
-            "invalid_mapnames": [],
-        }
-        tool_message = ToolMessage(
-            content=json.dumps(response_dict),
-            tool_call_id=runtime.tool_call_id or "",
-        )
-        return Command(
-            update={
-                "base_override_token": "",
-                "live_override_toml": "",
-                "messages": [tool_message],
-            },
-        )
+        return json.dumps({"ok": False, "error_type": "ConflictDetectionError", "details": str(exc)})
 
 @tool
 def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:
@@ -188,11 +182,7 @@ def generate_and_validate_toml(intent_json: str) -> dict[str, Any]:
             "error": "",
         }
     except Exception as exc:
-        return {
-            "ok": False,
-            "toml": "",
-            "error": str(exc),
-        }
+        return {"ok": False, "toml": "", "error_type": "TomlGenerationError", "details": str(exc)}
 
 
 @tool
@@ -339,7 +329,7 @@ def lookup_infrastructure_data(target_output: str, source_value: str) -> str:
         return "\n".join(formatted_results)
 
     except Exception as exc:
-        return f"Infrastructure lookup is currently unavailable: {exc}"
+        return json.dumps({"ok": False, "error_type": "LookupError", "details": str(exc)})
 
 
 @tool
@@ -376,7 +366,7 @@ def get_unique_infrastructure_values(entity_type: str) -> str:
             )
         return ", ".join(values) if values else "No metros found."
     except Exception as exc:
-        return f"Failed to load infrastructure values: {exc}"
+        return json.dumps({"ok": False, "error_type": "LookupError", "details": str(exc)})
 
 
 @tool
@@ -407,7 +397,7 @@ def lookup_directive_schema(directive_name: str) -> str:
 
         return json.dumps(directives[matched_key], indent=2)
     except Exception as exc:
-        return f"Failed to load directive schema: {exc}"
+        return json.dumps({"ok": False, "error_type": "LookupError", "details": str(exc)})
 
 
 def _load_conflict_rules() -> dict[str, Any]:
@@ -424,6 +414,7 @@ def apply_override_to_workspace(
     live_override_toml: Annotated[str, InjectedState("live_override_toml")],
     config: RunnableConfig,
     runtime: ToolRuntime,
+    draft_toml: Annotated[str | None, InjectedState("draft_toml")] = None,
 ) -> Command:
     """
     STEP 6 TOOL. Use this tool ONLY after the user explicitly approves the deployment of the override.
@@ -540,7 +531,8 @@ def apply_override_to_workspace(
                 extracted = item
             target_intents.append(_flatten_intent(extracted))
 
-        doc = tomlkit.parse(live_override_toml)
+        base_toml = draft_toml if draft_toml else live_override_toml
+        doc = tomlkit.parse(base_toml)
         conflict_rules = _load_conflict_rules()
 
         doc = execute_ast_update(doc, target_intents, new_intents, conflict_rules)
@@ -555,7 +547,8 @@ def apply_override_to_workspace(
         )
     except Exception as exc:
         tool_message = ToolMessage(
-            content=json.dumps({"ok": False, "error": f"Failed to apply overrides in-memory: {exc}"}),
+            content=json.dumps({"ok": False, "error_type": "ApplyOverrideError", "details": f"Failed to apply overrides in-memory: {exc}"}),
+
             tool_call_id=runtime.tool_call_id or "",
         )
         return Command(
@@ -602,6 +595,15 @@ def _compact_deploy_result(response: dict[str, Any]) -> dict[str, Any]:
     if token is not None:
         compact_payload["offline_token"] = token
 
+    if not success:
+        compact_payload["offline_run_errors"] = response.get("offline_run_errors", [])
+        compact_payload["stderr"] = response.get("stderr", "")
+        offline_run_log = response.get("offline_run_log")
+        if isinstance(offline_run_log, str):
+            compact_payload["offline_run_log"] = offline_run_log[-1500:]
+        else:
+            compact_payload["offline_run_log"] = ""
+
     return compact_payload
 
 
@@ -628,7 +630,8 @@ def deploy_and_trigger_offline_computation(
             content=json.dumps(
                 {
                     "ok": False,
-                    "error": f"Failed to deploy and trigger computation: {exc}",
+                    "error_type": "DeploymentError",
+                    "details": str(exc),
                 }
             ),
             tool_call_id=runtime.tool_call_id or "",
@@ -667,6 +670,7 @@ def request_deployment_approval(stanzas_to_add: str, stanzas_to_delete: str, mes
 
 SUPERVISOR_TOOLS = [
     extract_override_intent,
+    refresh_live_override_snapshot,
     detect_override_conflicts,
     generate_and_validate_toml,
     search_leroy_documentation,

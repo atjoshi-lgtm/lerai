@@ -24,9 +24,12 @@ Project summary:
 Key areas and ownership boundaries:
 - lerai/lerai_main.py: Webex bot startup and command registration.
 - lerai/lerai_commands.py: Command classes and dispatch behavior.
-- lerai/leroy_overrides_writer.py: Override orchestration entry point. It still provisions a transient Git workspace per request, but the current supervisor no longer uses that workspace as the source of truth for live override state.
-- lerai/api_clients/override_api.py: mTLS-backed LeROY override API client. Fetches the current override body plus optimistic-concurrency token and submits the final TOML for deployment/offline execution.
-- lerai/override_agent/tools.py: LangGraph supervisor tools, including `detect_override_conflicts` (now seeded from live API state), `apply_override_to_workspace` (in-memory AST mutation of the fetched TOML), and `deploy_and_trigger_offline_computation` (API-backed deploy step). The internal `_parse_payload` helper unwraps single-key dict wrappers (e.g., `{"to_delete": [...]}`) that the LLM may emit instead of a bare JSON array before processing intents.
+- lerai/leroy_overrides_writer.py: Override orchestration entry point. It still provisions a transient Git workspace per request, but the current supervisor no longer uses that workspace as the source of truth for live override state. The override agent now fetches live state directly from the LeROY override API.
+- lerai/api_clients/override_api.py: mTLS-backed LeROY override API client. `fetch_override_and_token()` fetches the current override body plus optimistic-concurrency token. `submit_offline_override()` submits the final TOML for deployment/offline execution with enhanced error handling to detect upstream failures from multiple response formats, coerce success flags, and raise descriptive exceptions.
+- lerai/override_agent/tools.py: LangGraph supervisor tools. `refresh_live_override_snapshot` (STEP 3) fetches live override state upfront and caches it in graph state. `detect_override_conflicts` now uses injected state instead of fetching inline, and returns plain JSON strings instead of Command objects. Other tools include `extract_override_intent`, `generate_and_validate_toml`, `search_leroy_documentation`, `lookup_infrastructure_data`, `get_unique_infrastructure_values`, `lookup_directive_schema`, `request_deployment_approval`, `apply_override_to_workspace`, and `deploy_and_trigger_offline_computation`. Unified error format: `{"ok": False, "error_type": "...", "details": "..."}`.
+- lerai/override_agent/state.py: `OverrideAgentState` with custom reducers (`_last_nonempty`) for handling parallel writes to `base_override_token`, `live_override_toml`, and `draft_toml`.
+- lerai/override_agent/nodes.py: Supervisor node that routes requests to tools. State updates for `base_override_token` and `live_override_toml` now come directly from tool Command objects rather than being extracted from tool message content.
+- lerai/override_agent/graph.py: Singleton LangGraph app sharing `lerai_checkpoints.db` checkpointer.
 - lerai/cplex_agent/: Standalone LangGraph agent for CPLEX offline quota computation. Contains `state.py` (`CplexAgentState`), `tools.py` (`trigger_offline_quota_computation`, `CPLEX_TOOLS`), `nodes.py` (`supervisor_node`), and `graph.py` (singleton `get_compiled_graph()` sharing `lerai_checkpoints.db` with the override agent).
 - lerai/cplex_runner.py: Bridges Webex bot traffic to the CPLEX agent (thread-id resolution, graph invoke, threaded reply).
 - lerai/overrides_pipeline/entity_extractor.py: Structured intent extraction and normalization.
@@ -34,10 +37,36 @@ Key areas and ownership boundaries:
 - lerai/overrides_pipeline/toml_generator.py: TOML stanza creation, schema validation, and the deterministic `execute_ast_update` nuke-and-append AST engine that mutates a parsed `override.toml` document.
 - lerai/git_workspace.py: Transient Git workspace wrapper (`TransientGitWorkspace`) still used by Diff Analyst and by transitional override-entry scaffolding.
 - lerai/config.py: Shared environment parsing/validation helpers.
-- lerai/logging_utils.py: Logging redaction and safe logging helpers.
+- lerai/logging_utils.py: Logging redaction helpers now disabled (no-op) to facilitate debugging.
 - openai_agent/openai_agent_client.py: Azure OpenAI request construction and HTTP calls.
 - tests/: Regression tests and fixture-driven behavior checks, with priority on overrides pipeline coverage.
 - docs/: Architecture, implementation notes, and test guide.
+
+Domain terms to preserve:
+- LR: Large Region scope used by commands and queries.
+- LeROY overrides: TOML override-record stanzas with schema and conflict rules.
+- Query2 checks: variance-addition and quota-exceed reporting paths.
+- Promotion flow: requester/approver flow with signed approval tokens.
+
+## Architectural Patterns and Recent Changes
+
+### State Management with Custom Reducers
+The `OverrideAgentState` now uses custom reducer functions for `base_override_token`, `live_override_toml`, and `draft_toml` to handle parallel tool writes safely. The `_last_nonempty` reducer ensures that when multiple tools update the same state key in parallel, the latest non-empty value is retained. This allows tools to update state independently without merge conflicts.
+
+### Decoupled Snapshot Fetching
+The `refresh_live_override_snapshot` tool (STEP 3 in the workflow) explicitly fetches the live override TOML and concurrency token upfront and caches them in graph state. Downstream tools like `detect_override_conflicts` then use `InjectedState("live_override_toml")` to consume this cached value instead of fetching independently. This reduces duplicate API calls and ensures all operations in an editing session use the same base token for optimistic concurrency control.
+
+### Tool Return Format Standardization
+Tools now use consistent structured return formats:
+- Success: Return plain JSON strings with relevant fields (e.g., `{"ok": True, "has_conflict": False, ...}`) or Command objects that update state.
+- Failure: Return structured error format `{"ok": False, "error_type": "ErrorType", "details": "error message"}` for consistent error handling.
+
+### Enhanced API Error Handling
+The `submit_offline_override` function in `override_api.py` now handles multiple response formats from upstream endpoints:
+- Stdout-wrapped responses: Parses Python dict strings from the `stdout` field.
+- Direct structured responses: Accepts JSON payloads that directly contain offline override results.
+- Upstream failures: Detects failure indicators (`success: False`, non-zero returncode) and constructs detailed error messages from `offline_run_errors` and `stderr`.
+Helper functions `_coerce_success_flag`, `_looks_like_offline_result`, and `_build_upstream_failure_message` make the logic testable and maintainable.
 
 Domain terms to preserve:
 - LR: Large Region scope used by commands and queries.
@@ -151,3 +180,9 @@ When work is complete, provide:
 2. Behavioral impact.
 3. Validation performed (or why not run).
 4. Suggested next steps when meaningful.
+
+## Running code in shell (e.g., while running the interactive `test_override_cli.py` for debugging):
+- Activate venv using `source /home/atjoshi/lerai/.venv/bin/activate`
+- Export all environment variables using `source exports.sh`
+- Run the script with python3, e.g., `python3 test_override_cli.py`
+- If running any internal (to debug using `__main__`), make sure that all the appropriate custom modules are in the PYTHONPATH, e.g., `PYTHONPATH=lerai python3 lerai/leroy_overrides_writer.py`.

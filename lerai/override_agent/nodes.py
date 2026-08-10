@@ -280,68 +280,6 @@ def _extract_latest_draft(messages: list[Any]) -> str:
     return ""
 
 
-def _extract_latest_live_override_toml(messages: list[Any]) -> str:
-    """Returns the latest live override TOML snapshot for concurrency tracking."""
-    for message in reversed(messages):
-        if not isinstance(message, ToolMessage):
-            continue
-
-        if message.name != "detect_override_conflicts":
-            continue
-
-        content = message.content
-        if isinstance(content, list):
-            content = "\n".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
-
-        if isinstance(content, str):
-            try:
-                payload = json.loads(content)
-            except json.JSONDecodeError:
-                return ""
-
-            if isinstance(payload, dict):
-                return str(payload.get("live_override_toml", ""))
-
-        if isinstance(content, dict):
-            return str(content.get("live_override_toml", ""))
-
-    return ""
-
-
-def _extract_latest_base_override_token(messages: list[Any]) -> str:
-    """Returns the latest concurrency token emitted by any tool payload."""
-    for message in reversed(messages):
-        if not isinstance(message, ToolMessage):
-            continue
-
-        content = message.content
-        if isinstance(content, list):
-            content = "\n".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
-
-        if isinstance(content, str):
-            try:
-                payload = json.loads(content)
-            except json.JSONDecodeError:
-                continue
-        elif isinstance(content, dict):
-            payload = content
-        else:
-            continue
-
-        if isinstance(payload, dict):
-            token = payload.get("base_override_token") or payload.get("override_token")
-            if token:
-                return str(token)
-
-    return ""
-
-
 def supervisor_node(state: OverrideAgentState) -> OverrideAgentState:
     """Primary Supervisor node for the override workflow."""
     llm = _build_supervisor_llm().bind_tools(tools)
@@ -381,19 +319,6 @@ def supervisor_node(state: OverrideAgentState) -> OverrideAgentState:
             "[Supervisor] generated_stanza_toml updated in state (len=%d chars)",
             len(latest_draft),
         )
-
-    live_override_toml = _extract_latest_live_override_toml(combined_messages)
-    if live_override_toml:
-        updates["live_override_toml"] = live_override_toml
-        logger.info(
-            "[Supervisor] live_override_toml updated in state (len=%d chars)",
-            len(live_override_toml),
-        )
-
-    base_override_token = _extract_latest_base_override_token(combined_messages)
-    if base_override_token:
-        updates["base_override_token"] = base_override_token
-        logger.info("[Supervisor] base_override_token updated in state")
 
     return updates
 

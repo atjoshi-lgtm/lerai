@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from openai_agent.openai_agent_client import responses
 from openai_agent.openai_agent_client import chat_completion
+from lerai.error_truncation import truncate_with_marker
 from lerai.logging_utils import redact_value
 
 
@@ -65,7 +66,10 @@ def fetch_offline_prod_diff(timeout=30) -> str:
             detail = e.read().decode("utf-8", errors="replace")
         except Exception:
             pass
-        raise RuntimeError(f"HTTP error {e.code} fetching log errors: {detail[:500]}")
+        raise RuntimeError(
+            f"HTTP error {e.code} fetching log errors: "
+            f"{truncate_with_marker(detail, 'http_error_detail')}"
+        )
     except urllib.error.URLError as e:
         raise RuntimeError(f"Network error fetching log errors: {e}")
     
@@ -113,12 +117,15 @@ def compare_offline_vs_production(check_staleness_only=False, stale_hours=36):
     try:
         response = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse diff response as JSON: {e}\nRaw: {raw[:200]}")
+        raise RuntimeError(
+            f"Failed to parse diff response as JSON: {e}\nRaw: "
+            f"{truncate_with_marker(raw, 'raw_response')}"
+        )
     
     if response.get("returncode") != 0:
         raise RuntimeError(
             f"Diff script failed (returncode={response['returncode']})\n"
-            f"stderr: {response.get('stderr', '').strip()}"
+            f"stderr: {truncate_with_marker(response.get('stderr', '').strip(), 'stderr')}"
         )
     
     stderr = response.get("stderr", "").strip()

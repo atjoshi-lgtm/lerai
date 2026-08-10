@@ -5,6 +5,8 @@ import json
 import urllib.parse
 import urllib.request
 
+from lerai.error_truncation import truncate_with_marker
+
 
 #from sql2_query import run_sql2_query
 
@@ -128,7 +130,10 @@ having vsize_limit < 2516582400
             detail = e.read().decode("utf-8", errors="replace")
         except Exception:
             pass
-        raise RuntimeError(f"HTTP error {e.code} fetching query2 result: {detail[:500]}")
+        raise RuntimeError(
+            f"HTTP error {e.code} fetching query2 result: "
+            f"{truncate_with_marker(detail, 'http_error_detail')}"
+        )
     except urllib.error.URLError as e:
         raise RuntimeError(f"Network error fetching query2 result: {e}")
         

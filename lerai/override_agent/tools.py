@@ -16,6 +16,7 @@ from langgraph.types import Command, interrupt
 from langgraph.prebuilt import InjectedState, ToolRuntime
 
 from lerai.api_clients.override_api import fetch_override_and_token, submit_offline_override
+from lerai.error_truncation import truncate_with_marker
 from lerai.override_agent.knowledge_base import search_leroy_knowledge_base
 from lerai.overrides_pipeline.conflict_detector import detect_conflicts, find_invalid_mapnames
 from lerai.overrides_pipeline.toml_generator import (
@@ -596,13 +597,20 @@ def _compact_deploy_result(response: dict[str, Any]) -> dict[str, Any]:
         compact_payload["offline_token"] = token
 
     if not success:
-        compact_payload["offline_run_errors"] = response.get("offline_run_errors", [])
-        compact_payload["stderr"] = response.get("stderr", "")
+        compact_payload["message"] = truncate_with_marker(
+            response.get("message", ""), "message"
+        )
+        compact_payload["offline_run_errors"] = truncate_with_marker(
+            response.get("offline_run_errors", []), "offline_run_errors"
+        )
+        compact_payload["stderr"] = truncate_with_marker(
+            response.get("stderr", ""), "stderr"
+        )
         offline_run_log = response.get("offline_run_log")
-        if isinstance(offline_run_log, str):
-            compact_payload["offline_run_log"] = offline_run_log[-1500:]
-        else:
-            compact_payload["offline_run_log"] = ""
+        compact_payload["offline_run_log"] = truncate_with_marker(
+            offline_run_log if isinstance(offline_run_log, str) else "",
+            "offline_run_log",
+        )
 
     return compact_payload
 
@@ -631,7 +639,7 @@ def deploy_and_trigger_offline_computation(
                 {
                     "ok": False,
                     "error_type": "DeploymentError",
-                    "details": str(exc),
+                    "details": truncate_with_marker(str(exc), "details"),
                 }
             ),
             tool_call_id=runtime.tool_call_id or "",

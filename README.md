@@ -16,7 +16,8 @@ It provides command-driven workflows for:
 - approval-gated override deployment through an mTLS-authenticated LeROY API with optimistic-concurrency tokens,
 - standalone post-deployment offline quota computation through the CPLEX LangGraph agent,
 - semantic override conflict classification with scope-aware warnings and explicit replace/add guidance,
-- LeROY documentation search and infrastructure lookup for override-related questions.
+- LeROY documentation search and infrastructure lookup for override-related questions,
+- standardized error propagation with explicit truncation markers for oversized upstream failures.
 
 ## Override Architecture Status
 
@@ -26,6 +27,19 @@ The override path is currently in a hybrid migration state.
 - Conflict detection runs against the TOML returned by that API, not against a repo-local `override.toml` file.
 - After approval, the supervisor applies the add/delete plan in memory and submits the final TOML to `RUN_OFFLINE_OVERRIDE_URL` over mTLS using `CERT_PATH` and `KEY_PATH`.
 - The deployment response is compacted for the LLM context, but still preserves success status, return code, and the offline token when one is returned.
+- Deployment and API-adapter error paths now preserve upstream diagnostics (`message`, `offline_run_errors`, `stderr`, and `offline_run_log`) and apply explicit clipping markers when payloads exceed configured limits.
+
+### Error Truncation Policy
+
+- A shared truncation helper (`lerai/error_truncation.py`) is used by override/API/diff/OpenAI wrappers.
+- Global control variable: `LERAI_ERROR_TEXT_MAX_CHARS` (default `4000`, hard cap `50000`).
+- When truncation occurs, the emitted text includes a marker of the form:
+
+```text
+[TRUNCATED field=<name> original_chars=<N> shown_chars=<M> omitted_chars=<K>]
+```
+
+- This avoids silent clipping and makes partial payloads explicit in user-facing errors.
 
 Some orchestration still reflects the older Git-backed model:
 
@@ -49,7 +63,7 @@ The override agent also includes a hybrid LeROY knowledge-base search over `docs
 Run the no-server unit tests:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation tests.test_toml_generator
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation tests.test_toml_generator tests.test_override_api tests.test_override_agent_tools tests.test_error_truncation
 ```
 
 Run syntax compile checks:
@@ -101,6 +115,7 @@ export KEY_PATH=<path-to-client-key>
 export OVERRIDE_TOKEN_URL=<override-token-endpoint>
 export RUN_OFFLINE_OVERRIDE_URL=<offline-override-endpoint>
 export RUN_OFFLINE_OVERRIDE_TIMEOUT_SEC=<optional-timeout-seconds>
+export LERAI_ERROR_TEXT_MAX_CHARS=<optional-max-error-text-chars>
 
 # Transitional Git workspace settings still used by the Webex/CLI bridge
 export LEROY_GIT_REPO_URL=<your-repo-url>

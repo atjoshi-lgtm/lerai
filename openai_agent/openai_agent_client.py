@@ -1,4 +1,5 @@
 from lerai.config import bool_env, int_env, required_env
+from lerai.error_truncation import truncate_with_marker
 
 
 REQUIRED_AZURE_ENV_VARS = (
@@ -81,7 +82,8 @@ def _raise_for_status(response, requests_module):
         status_code = getattr(response, "status_code", "unknown")
         detail = getattr(response, "text", "") or str(exc)
         raise requests_module.HTTPError(
-            f"Azure OpenAI API error ({status_code}): {detail[:1000]}",
+            "Azure OpenAI API error "
+            f"({status_code}): {truncate_with_marker(detail, 'azure_http_error_detail')}",
             response=response,
         ) from exc
 

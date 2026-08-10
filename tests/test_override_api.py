@@ -71,7 +71,7 @@ class SubmitOfflineOverrideTimeoutTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            r"Offline override failed upstream \(returncode=1\): An error occurred: FCS API returned status code 500",
+            r"Offline override failed upstream \(returncode=1\)\. An error occurred: FCS API returned status code 500",
         ):
             submit_offline_override("[[override-records]]", "token-4")
 
@@ -90,6 +90,43 @@ class SubmitOfflineOverrideTimeoutTests(unittest.TestCase):
 
         self.assertTrue(parsed["success"])
         self.assertEqual(parsed["returncode"], 0)
+
+    @patch("lerai.api_clients.override_api.requests.post")
+    def test_raises_upstream_error_and_preserves_message_when_no_offline_run_errors(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "success": False,
+            "returncode": 1,
+            "message": "Error: Cmd('git') failed due to: exit code(128)\\n  cmdline: git push --porcelain -- origin\\n  stderr: 'fatal: remote error: Insufficient permissions'",
+        }
+        mock_post.return_value = response
+
+        with self.assertRaises(ValueError) as ctx:
+            submit_offline_override("[[override-records]]", "token-6")
+
+        self.assertIn("Offline override failed upstream (returncode=1).", str(ctx.exception))
+        self.assertIn("Error: Cmd('git') failed due to: exit code(128)", str(ctx.exception))
+        self.assertIn("message=Error: Cmd('git') failed due to: exit code(128)", str(ctx.exception))
+
+    @patch("lerai.api_clients.override_api.requests.post")
+    def test_raises_upstream_error_and_preserves_stderr_and_log(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "success": False,
+            "returncode": 2,
+            "stderr": "fatal: Could not read from remote repository.",
+            "offline_run_log": "line1\\nline2",
+        }
+        mock_post.return_value = response
+
+        with self.assertRaises(ValueError) as ctx:
+            submit_offline_override("[[override-records]]", "token-7")
+
+        self.assertIn("Offline override failed upstream (returncode=2).", str(ctx.exception))
+        self.assertIn("stderr=fatal: Could not read from remote repository.", str(ctx.exception))
+        self.assertIn("offline_run_log=line1\\nline2", str(ctx.exception))
 
 
 if __name__ == "__main__":

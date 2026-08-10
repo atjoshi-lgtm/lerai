@@ -5,6 +5,8 @@ import ssl
 import urllib.parse
 import urllib.request
 
+from lerai.error_truncation import truncate_with_marker
+
 RUN_QUERY2_URL = os.environ.get("RUN_QUERY2_URL")
 
 cert_path = os.environ.get("CERT_PATH")
@@ -152,7 +154,10 @@ having objcount_max  > objectlimit
             detail = e.read().decode("utf-8", errors="replace")
         except Exception:
             pass
-        raise RuntimeError(f"Quota Exceed: HTTP error {e.code} fetching query2 result: {detail[:500]}")
+        raise RuntimeError(
+            f"Quota Exceed: HTTP error {e.code} fetching query2 result: "
+            f"{truncate_with_marker(detail, 'http_error_detail')}"
+        )
     except urllib.error.URLError as e:
         raise RuntimeError(f"Quota Exceed: Network error fetching query2 result: {e}")
         

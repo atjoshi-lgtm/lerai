@@ -88,8 +88,25 @@ Submit the modified TOML file to trigger the CPLEX computation.
    - If `stdout` is a non-empty string, parse it with `ast.literal_eval()` to extract the structured result.
    - If `stdout` is missing/empty but the response JSON itself contains offline override fields (`success`, `returncode`, `offline_run_errors`, etc.), treat the JSON payload as the result directly.
 2. **Success Detection:** Check the `success` field (or coerce it if it's a string "true"/"false"). If `success` is `False` or missing with a non-zero `returncode`, treat it as a failure.
-3. **Upstream Errors:** When `success` is `False`, the response includes `offline_run_errors` (list of error strings) and `returncode`. Construct a clear error message by joining the error list and including the returncode.
+3. **Upstream Errors:** When `success` is `False`, preserve and surface all available diagnostics (`message`, `offline_run_errors`, `stderr`, `offline_run_log`, and `returncode`) in the failure payload returned to the agent.
 4. **Token Extraction:** When successful, capture the returned `token` field (this is the composite token) for use in Step 3.
+
+### Error Payload Truncation Standard
+
+To avoid losing critical context while keeping payload size bounded, LeRAI uses one global truncation setting and explicit truncation markers.
+
+- Environment variable: `LERAI_ERROR_TEXT_MAX_CHARS`
+- Default: `4000`
+- Hard cap: `50000`
+- Applied in API adapters/tool wrappers that forward raw upstream details.
+
+When clipping is applied, returned text includes this marker suffix:
+
+```text
+[TRUNCATED field=<name> original_chars=<N> shown_chars=<M> omitted_chars=<K>]
+```
+
+This ensures truncation is never silent.
 
 ### Step 3: Diff Verification
 
@@ -181,6 +198,17 @@ Example error response:
 }
 ```
 
+Example deployment error response with rich upstream context:
+```json
+{
+  "ok": false,
+  "error_type": "DeploymentError",
+  "details": "Offline override failed upstream (returncode=1). Error: Cmd('git') failed ...\nmessage=Error: Cmd('git') failed ...\nstderr=fatal: remote error: Insufficient permissions"
+}
+```
+
+If any field exceeds configured limits, the field text will include `[TRUNCATED ...]` marker metadata.
+
 ### Stateful Tool Execution (Injected State)
 
 Tools can receive cached state from the graph using LangGraph's `InjectedState` pattern:
@@ -223,7 +251,8 @@ The supervisor prompt enforces this sequence for transactional override requests
 
 7. **DEPLOY & TRIGGER:** `deploy_and_trigger_offline_computation(draft_toml: str) -> str`
    - Input: The draft TOML from state
-   - Returns: `{"ok": true, "success": true, "returncode": 0, "offline_token": "..."}` or error JSON
+  - Returns: `{"ok": true, "success": true, "returncode": 0, "offline_token": "..."}` or error JSON
+  - On failure, compact payload preserves `message`, `offline_run_errors`, `stderr`, and `offline_run_log` (subject to the shared truncation policy above).
    - Calls `/v1/run_offline_override` endpoint with cached `base_override_token` and submits the draft TOML
 
 ### State Reducer Pattern

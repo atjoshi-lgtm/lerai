@@ -6,6 +6,7 @@ import urllib.request
 import urllib.error
 import ssl
 from openai_agent.openai_agent_client import chat_completion
+from lerai.error_truncation import truncate_with_marker
 from lerai.logging_utils import redact_value
 
 
@@ -50,7 +51,10 @@ def fetch_log_errors_via_http(timeout=60) -> str:
             detail = e.read().decode("utf-8", errors="replace")
         except Exception:
             pass
-        raise RuntimeError(f"HTTP error {e.code} fetching log errors: {detail[:500]}")
+        raise RuntimeError(
+            f"HTTP error {e.code} fetching log errors: "
+            f"{truncate_with_marker(detail, 'http_error_detail')}"
+        )
     except urllib.error.URLError as e:
         raise RuntimeError(f"Network error fetching log errors: {e}")
 

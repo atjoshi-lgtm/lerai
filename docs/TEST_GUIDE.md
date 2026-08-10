@@ -9,7 +9,7 @@ The tests are intentionally designed to run without a Webex bot server, MySQL da
 Run the full no-server suite from the repository root:
 
 ```bash
-python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation tests.test_toml_generator
+python3 -m unittest tests.test_openai_agent_client tests.test_query_response_parsing tests.test_promote_security tests.test_dp_ama_state tests.test_config tests.test_logging_utils tests.test_git_workspace tests.test_entity_extractor_normalization tests.test_leroy_overrides_writer_query_cases tests.test_leroy_overrides_writer_conflicts_with_fixture tests.test_mapname_validation tests.test_conflict_detector_object_count tests.test_toml_generator_comment_preservation tests.test_toml_generator tests.test_override_api tests.test_override_agent_tools tests.test_error_truncation
 ```
 
 Run the compile check:
@@ -49,6 +49,7 @@ export KEY_PATH=<path-to-client-key>
 export OVERRIDE_TOKEN_URL=<override-token-endpoint>
 export RUN_OFFLINE_OVERRIDE_URL=<offline-override-endpoint>
 export RUN_OFFLINE_OVERRIDE_TIMEOUT_SEC=<optional-timeout-seconds>
+export LERAI_ERROR_TEXT_MAX_CHARS=<optional-max-error-text-chars>
 
 # Transitional bridge settings still used by the CLI entry point
 export LEROY_GIT_REPO_URL=<your-git-repo>
@@ -77,6 +78,7 @@ What to verify manually:
 - Conceptual LeROY questions are answered through the manual search tool rather than by generating TOML.
 - Infrastructure lookup questions can validate map names and translate region-to-metro or metro-to-region mappings.
 - Successful deployment responses surface compact API results, including success status, return code, and offline token when present.
+- Deployment failures preserve rich upstream diagnostics (`message`, `offline_run_errors`, `stderr`, `offline_run_log`) and include explicit `[TRUNCATED ...]` markers when any field is clipped.
 - The first documentation-search run can create or refresh the local index under `lerai/data/chroma_index/`.
 - On exit (normal or error), the ephemeral workspace is deleted.
 
@@ -165,7 +167,8 @@ Third-party library loggers are suppressed to `WARNING`. There is no workspace c
 | `tests/test_leroy_overrides_writer_conflicts_with_fixture.py` | Verifies conflict detection behavior against a fixture `override.toml` using JSON-defined conflict cases and expected conflict messaging. |
 | `tests/test_mapname_validation.py` | Verifies map-name validation against `lerai/data/maps.csv` and warning payload fields returned by `detect_override_conflicts`. |
 | `tests/test_override_api.py` | Verifies API deploy timeout behavior for `submit_offline_override()`. |
-| `tests/test_override_agent_tools.py` | Verifies deploy-result compaction, especially extraction of the offline token from API payloads. |
+| `tests/test_override_agent_tools.py` | Verifies deploy-result compaction, offline token extraction, and truncation-marker behavior for oversized error fields. |
+| `tests/test_error_truncation.py` | Verifies shared truncation policy, env-controlled limits, hard cap handling, and explicit `[TRUNCATED ...]` marker formatting. |
 
 ## `tests/test_git_workspace.py`
 

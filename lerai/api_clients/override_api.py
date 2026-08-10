@@ -8,6 +8,7 @@ from typing import Any, Tuple
 import requests
 
 from lerai.logging_utils import redact_value
+from lerai.error_truncation import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +79,63 @@ def _looks_like_offline_result(payload: dict[str, Any]) -> bool:
 def _build_upstream_failure_message(payload: dict[str, Any]) -> str:
     errors = payload.get("offline_run_errors")
     if isinstance(errors, list):
-        error_text = "; ".join(str(item) for item in errors if item is not None)
+        offline_run_errors_text = "; ".join(str(item) for item in errors if item is not None)
     elif errors is None:
-        error_text = ""
+        offline_run_errors_text = ""
     else:
-        error_text = str(errors)
+        offline_run_errors_text = str(errors)
+
+    error_text = offline_run_errors_text
+
+    message_value = payload.get("message")
+    message_text = str(message_value).strip() if message_value is not None else ""
+
+    stderr_value = payload.get("stderr")
+    stderr_text = str(stderr_value).strip() if stderr_value is not None else ""
+
+    offline_run_log_value = payload.get("offline_run_log")
+    offline_run_log_text = (
+        str(offline_run_log_value).strip() if offline_run_log_value is not None else ""
+    )
+
+    if message_text:
+        message_text = truncate_with_marker(message_text, "message")
+    if stderr_text:
+        stderr_text = truncate_with_marker(stderr_text, "stderr")
+    if offline_run_errors_text:
+        offline_run_errors_text = truncate_with_marker(
+            offline_run_errors_text, "offline_run_errors"
+        )
+    if offline_run_log_text:
+        offline_run_log_text = truncate_with_marker(
+            offline_run_log_text, "offline_run_log"
+        )
+
+    # Use the most specific upstream signal as the primary error summary.
+    if not error_text:
+        if message_text:
+            error_text = message_text
+        elif stderr_text:
+            error_text = stderr_text
 
     returncode = payload.get("returncode")
+    base_message = f"Offline override failed upstream (returncode={returncode})."
     if error_text:
-        return f"Offline override failed upstream (returncode={returncode}): {error_text}"
-    return f"Offline override failed upstream (returncode={returncode})."
+        base_message = f"{base_message} {error_text}"
+
+    detail_lines: list[str] = []
+    if message_text:
+        detail_lines.append(f"message={message_text}")
+    if offline_run_errors_text:
+        detail_lines.append(f"offline_run_errors={offline_run_errors_text}")
+    if stderr_text:
+        detail_lines.append(f"stderr={stderr_text}")
+    if offline_run_log_text:
+        detail_lines.append(f"offline_run_log={offline_run_log_text}")
+
+    if detail_lines:
+        return f"{base_message}\n" + "\n".join(detail_lines)
+    return base_message
 
 
 def _request_certs() -> Tuple[str, str]:

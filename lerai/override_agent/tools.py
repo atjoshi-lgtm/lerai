@@ -568,25 +568,25 @@ def _compact_deploy_result(response: dict[str, Any]) -> dict[str, Any]:
         success = bool(raw_success)
 
     token: str | None = None
-    offline_diff = response.get("offline_diff")
-    if isinstance(offline_diff, str):
-        try:
-            parsed_diff = ast.literal_eval(offline_diff)
-            if isinstance(parsed_diff, dict):
-                maybe_token = parsed_diff.get("token")
-                if maybe_token is not None:
-                    token = str(maybe_token)
-        except (ValueError, SyntaxError):
-            token = None
-    elif isinstance(offline_diff, dict):
-        maybe_token = offline_diff.get("token")
-        if maybe_token is not None:
-            token = str(maybe_token)
+    top_level_token = response.get("token") or response.get("override_token")
+    if top_level_token is not None:
+        token = str(top_level_token)
 
     if token is None:
-        top_level_token = response.get("token") or response.get("override_token")
-        if top_level_token is not None:
-            token = str(top_level_token)
+        offline_diff = response.get("offline_diff")
+        if isinstance(offline_diff, str):
+            try:
+                parsed_diff = ast.literal_eval(offline_diff)
+                if isinstance(parsed_diff, dict):
+                    maybe_token = parsed_diff.get("token")
+                    if maybe_token is not None:
+                        token = str(maybe_token)
+            except (ValueError, SyntaxError):
+                token = None
+        elif isinstance(offline_diff, dict):
+            maybe_token = offline_diff.get("token")
+            if maybe_token is not None:
+                token = str(maybe_token)
 
     compact_payload: dict[str, Any] = {
         "ok": success,

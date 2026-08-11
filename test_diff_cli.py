@@ -25,15 +25,11 @@ _info_handler.setFormatter(_fmt)
 _debug_handler = logging.FileHandler(_debug_log)
 _debug_handler.setLevel(logging.DEBUG)
 _debug_handler.setFormatter(_fmt)
-_console_handler = logging.StreamHandler(sys.stdout)
-_console_handler.setLevel(logging.INFO)
-_console_handler.setFormatter(_fmt)
 
 _root_logger = logging.getLogger()
 _root_logger.setLevel(logging.DEBUG)
 _root_logger.addHandler(_info_handler)
 _root_logger.addHandler(_debug_handler)
-_root_logger.addHandler(_console_handler)
 
 for _noisy_logger in ("httpx", "httpcore", "openai", "openai._base_client"):
     logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
@@ -42,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
+	if len(sys.argv) < 2:
+		print("Usage: python test_diff_cli.py <composite_token>")
+		return 1
+
+	provided_token = sys.argv[1]
+
 	thread_id = f"diff_cli_{uuid.uuid4().hex[:8]}"
 	config = {"configurable": {"thread_id": thread_id}}
 	logger.info("Diff Analyst CLI session started (thread_id=%s)", thread_id)
@@ -74,7 +76,7 @@ def main() -> int:
 		logger.info("Compiling Diff Analyst graph")
 		graph = get_compiled_graph()
 		logger.info("Invoking Diff Analyst graph")
-		result = graph.invoke({"messages": []}, config=config)
+		result = graph.invoke({"messages": [], "composite_token": provided_token}, config=config)
 	except Exception as exc:
 		logger.error("Error invoking Diff Analyst graph: %s", exc, exc_info=True)
 		print(f"\n❌ Error invoking Diff Analyst graph: {exc}\n")

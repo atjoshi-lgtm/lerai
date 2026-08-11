@@ -667,10 +667,10 @@ def request_deployment_approval(stanzas_to_add: str, stanzas_to_delete: str, mes
 
     parts.append(f"### 🆕 To Be Added:\n```toml\n{stanzas_to_add}\n```\n")
 
-    parts.append(
-        '**Do you approve these changes for deployment?**'
-        ' (Reply "Yes" to deploy, or tell me what to change)'
-    )
+    # parts.append(
+    #     '**Do you approve these changes for deployment?**'
+    #     ' (Reply "Yes" to deploy, or tell me what to change)'
+    # )
 
     markdown_string = "\n".join(parts)
     user_response = interrupt(markdown_string)

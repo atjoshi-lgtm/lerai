@@ -146,6 +146,18 @@ def fetch_maps(output_path=None):
     return data
 
 
+# query for mapruleid_mapname.csv
+# select 
+#     mapruleid, 
+#     shortname, 
+#     network, 
+#     allowedservergeo, 
+#     excludedserverGeo 
+# from 
+#     capacity.maprules
+
+
+
 if __name__ == "__main__":
     print(fetch_maps())
     # Example usage

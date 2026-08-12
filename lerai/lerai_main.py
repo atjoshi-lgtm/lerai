@@ -27,6 +27,7 @@ from lerai_commands import (
     LeroyOverrideWriterCommand,
     TriggerCplexCommand,
     DiffAnalystCommand,
+    DiffAnalystV2Command,
 )
 
 # Import scheduled jobs
@@ -84,12 +85,15 @@ class MentionOnlyWebexBot(WebexBot):
 
         for c in self.commands:
             if not is_card_callback_command and c.command_keyword:
+                command_keyword = c.command_keyword.strip().lower()
                 if c.exact_command_keyword_match:
-                    if normalized == c.command_keyword:
+                    if normalized == command_keyword:
                         command_found = True
                         break
                 else:
-                    if normalized.find(c.command_keyword) != -1:
+                    # Match either the bare command or command followed by arguments.
+                    # Avoid substring collisions like "/analyze_diff" matching "/analyze_diff_v2".
+                    if normalized == command_keyword or normalized.startswith(f"{command_keyword} "):
                         command_found = True
                         break
             else:
@@ -120,6 +124,10 @@ class MentionOnlyWebexBot(WebexBot):
                         # Identify the agent based on the root command
                         if "/trigger_cplex" in root_text:
                             target_command = "/trigger_cplex"
+                        elif "/analyze_diff_v2" in root_text:
+                            target_command = "/analyze_diff_v2"
+                        elif "/analyze_diff" in root_text:
+                            target_command = "/analyze_diff"
                         elif "diff_offline_prod" in root_text:
                             target_command = "diff_offline_prod"
                 except Exception as e:
@@ -171,6 +179,7 @@ def lerai_main():
     bot.add_command(QuotaExceedCommand())
     bot.add_command(LeroyOverrideWriterCommand())
     bot.add_command(TriggerCplexCommand())
+    bot.add_command(DiffAnalystV2Command())
     bot.add_command(DiffAnalystCommand())
     #bot.add_command(SimulateDailyReport())
     #bot.add_command(SimulateDailyOffloadReport())

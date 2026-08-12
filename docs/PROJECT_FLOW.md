@@ -91,6 +91,10 @@ Important modules under `lerai/`:
 | `lerai/diff_agent/utils.py` | CSV unified-diff parsing/filtering utilities with threshold-based noise filtering for quota changes. |
 | `lerai/diff_agent/nodes.py` | Ingestion and correlation nodes. Builds branch-aware TOML diff, source metadata, timestamps, and deterministic promotion footer. |
 | `lerai/diff_agent/graph.py` | One-shot sequential LangGraph DAG: `ingest_and_filter` → `analyze_and_correlate`. |
+| `lerai/diff_agent_v2/state.py` | Typed state for the v2 transient repo diff graph, carrying the override diff plus BLC/FCS structure and quota rows. |
+| `lerai/diff_agent_v2/utils.py` | CSV reading, map translation normalization, and geography enrichment utilities used by the v2 comparison pipeline. |
+| `lerai/diff_agent_v2/nodes.py` | v2 ingestion and correlation path that enriches the diff rows and sends an indented JSON payload to Azure OpenAI. |
+| `lerai/diff_agent_v2/graph.py` | v2 LangGraph DAG: `ingest_and_diff_data` → `analyze_and_correlate`. |
 | `lerai/cplex_agent/state.py` | `CplexAgentState` TypedDict with a single `messages` field. |
 | `lerai/cplex_agent/tools.py` | Defines `trigger_offline_quota_computation` (extracted from `override_agent/tools.py`) and exports `CPLEX_TOOLS`. |
 | `lerai/cplex_agent/nodes.py` | `supervisor_node` for the CPLEX graph. Loads `lerai/prompts/cplex_agent_system_prompt.txt` at import time, binds the LLM to `CPLEX_TOOLS`, and reuses `_build_supervisor_llm` and `should_continue` from `override_agent/nodes.py`. |
@@ -132,6 +136,9 @@ graph TD
     DiffRunner --> DiffGraph[diff_agent/graph.py]
     DiffGraph --> DiffIngest[diff_agent/nodes.py ingest_and_filter]
     DiffGraph --> DiffAnalyze[diff_agent/nodes.py analyze_and_correlate]
+    DiffRunner --> DiffGraphV2[diff_agent_v2/graph.py]
+    DiffGraphV2 --> DiffIngestV2[diff_agent_v2/nodes.py ingest_and_diff_data]
+    DiffGraphV2 --> DiffAnalyzeV2[diff_agent_v2/nodes.py analyze_and_correlate]
     DiffIngest --> GitWS
     DiffIngest --> InternalDiff
     DiffAnalyze --> Azure

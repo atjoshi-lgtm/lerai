@@ -41,28 +41,29 @@ class TransientGitWorkspace:
 
     def __init__(
         self,
-        repo_url: str | None = None,
+        repo_url: str,
+        local_path: str | Path,
+        ssh_key_path: str,
         branch: str | None = None,
-        local_path: str | Path | None = None,
-        ssh_key_path: str | None = None,
         lock_path: str | Path = "/tmp/leroy_git.lock",
     ) -> None:
-        self.repo_url = repo_url or os.environ.get("LEROY_GIT_REPO_URL")
-        self.branch = branch or os.environ.get("LEROY_GIT_BRANCH")
-        self.local_path = Path(local_path or os.environ.get("LEROY_GIT_LOCAL_PATH", "/tmp/leroy_config_test"))
-        self.ssh_key_path = ssh_key_path or os.environ.get("LEROY_GIT_SSH_KEY_PATH")
+        self.repo_url = repo_url
+        self.branch = branch
+        self.local_path = Path(local_path)
+        self.ssh_key_path = ssh_key_path
         self.lock_path = Path(lock_path)
 
         missing = [
             name
             for name, value in (
-                ("LEROY_GIT_REPO_URL", self.repo_url),
-                ("LEROY_GIT_SSH_KEY_PATH", self.ssh_key_path),
+                ("repo_url", self.repo_url),
+                ("local_path", str(self.local_path)),
+                ("ssh_key_path", self.ssh_key_path),
             )
             if not value
         ]
         if missing:
-            raise GitConfigError("Missing required environment variable(s): " + ", ".join(missing))
+            raise GitConfigError("Missing required argument(s): " + ", ".join(missing))
 
     def clone(self) -> Path:
         with self._acquire_lock():
@@ -134,7 +135,11 @@ class TransientGitWorkspace:
 
             return (completed.stdout or "").strip()
 
-    def get_diff_against_branch(self, target_branch: str = "origin/master") -> str:
+    def get_diff_against_branch(
+        self,
+        target_branch: str = "origin/master",
+        file_path: str = "override.toml",
+    ) -> str:
         with self._acquire_lock():
             if not self.local_path.exists():
                 raise GitWorkspaceError(f"Workspace does not exist: {self.local_path}")
@@ -149,7 +154,7 @@ class TransientGitWorkspace:
             )
 
             completed = subprocess.run(
-                ["git", "diff", target_branch, "HEAD", "--", "override.toml"],
+                ["git", "diff", target_branch, "HEAD", "--", file_path],
                 cwd=str(self.local_path),
                 env=self._build_env(),
                 capture_output=True,
@@ -159,7 +164,7 @@ class TransientGitWorkspace:
             if completed.returncode != 0:
                 stderr = (completed.stderr or "").strip()
                 stdout = (completed.stdout or "").strip()
-                message = f"git diff {target_branch} HEAD -- override.toml failed"
+                message = f"git diff {target_branch} HEAD -- {file_path} failed"
                 if stderr:
                     message = f"{message}: {stderr}"
                 elif stdout:
@@ -168,14 +173,18 @@ class TransientGitWorkspace:
 
             return (completed.stdout or "").strip()
 
-    def get_override_file_timestamps(self, target_branch: str = "origin/master") -> dict[str, str]:
+    def get_override_file_timestamps(
+        self,
+        target_branch: str = "origin/master",
+        file_path: str = "override.toml",
+    ) -> dict[str, str]:
         with self._acquire_lock():
             if not self.local_path.exists():
                 raise GitWorkspaceError(f"Workspace does not exist: {self.local_path}")
 
             def _run_timestamp_command(ref: str) -> str:
                 completed = subprocess.run(
-                    ["git", "log", "-1", "--format=%cI", ref, "--", "override.toml"],
+                    ["git", "log", "-1", "--format=%cI", ref, "--", file_path],
                     cwd=str(self.local_path),
                     env=self._build_env(),
                     capture_output=True,
@@ -185,7 +194,7 @@ class TransientGitWorkspace:
                 if completed.returncode != 0:
                     stderr = (completed.stderr or "").strip()
                     stdout = (completed.stdout or "").strip()
-                    message = f"git log -1 --format=%cI {ref} -- override.toml failed"
+                    message = f"git log -1 --format=%cI {ref} -- {file_path} failed"
                     if stderr:
                         message = f"{message}: {stderr}"
                     elif stdout:
@@ -258,7 +267,12 @@ __all__ = [
 def run_test():
     try:
         print("🚀 Initializing transient workspace (acquiring lock & cloning)...")
-        workspace = TransientGitWorkspace()
+        workspace = TransientGitWorkspace(
+            repo_url=os.environ["LEROY_GIT_REPO_URL"],
+            local_path=os.environ.get("LEROY_GIT_LOCAL_PATH", "/tmp/leroy_config_test"),
+            ssh_key_path=os.environ["LEROY_GIT_SSH_KEY_PATH"],
+            branch=os.environ.get("LEROY_GIT_BRANCH"),
+        )
         local_path = workspace.clone()
         
         print("✅ Clone successful. Copying override.toml...")
@@ -294,5 +308,5 @@ def run_test():
         print(f"❌ An error occurred: {e}")
 
 if __name__ == "__main__":
-    run_test()
-    # pass
+    # run_test()
+    pass

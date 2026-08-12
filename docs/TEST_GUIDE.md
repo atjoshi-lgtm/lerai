@@ -122,6 +122,32 @@ Each Diff Analyst session writes two log files under `logs/test_cli/`:
 
 Third-party loggers are suppressed to `WARNING` just like the other CLI harnesses.
 
+## Manual Diff Analyst v2 Check
+
+Run the v2 Diff Analyst harness:
+
+```bash
+source exports.sh
+python3 test_diffv2_cli.py
+```
+
+What to verify manually:
+
+- The CLI prints a unique session id and runs the `diff_agent_v2` LangGraph path.
+- The v2 pipeline creates an ephemeral temp repo set under `/tmp/diff_agent_v2/<uuid>` and cleans it up afterward.
+- The output includes BLC and FCS structure diffs plus quota deltas from the offline and production CSV repos.
+- Maprule IDs are normalized before lookup so values such as bare numbers or `mr-<id>` forms resolve to the expected short names.
+- Geography fields (`metro`, `country`, and `geo`) are injected into the diff rows before the LLM sees them.
+- The exact LLM request payload is logged with indentation so the `content` field is readable in the debug log.
+- The Webex command `/analyze_diff_v2` runs the same logic without colliding with `/analyze_diff`.
+
+Each v2 session writes two log files under `logs/test_diffv2_cli/`:
+
+- `diffv2_agent_YYYYMMDD_HHMMSS.log` — INFO and above.
+- `diffv2_agent_YYYYMMDD_HHMMSS.debug.log` — DEBUG and above.
+
+This new v2 CLI is intentionally documented alongside the older diff_agent workflow and does not replace the older path or its test coverage.
+
 ## Manual Interactive CPLEX Agent Check
 
 The CPLEX agent invokes `trigger_offline_quota_computation` over SSH and uses the LLM to analyze the results. Run the dedicated CLI harness:

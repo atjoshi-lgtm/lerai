@@ -81,6 +81,27 @@ python3 test_override_cli.py
 The override CLI writes timestamped logs under `logs/test_cli/` and includes pretty-printed LLM request/response payloads for override-agent debugging. It also renders approval interrupts as human-readable markdown, shows multiple interrupts in order when present, and avoids raw interrupt object wrappers so deployment decisions can be tested locally. The CLI automatically creates a per-session ephemeral Git workspace (just like production) and cleans it up on exit.
 The current supervisor logic no longer reads live override state from that workspace; it fetches live TOML and deploy tokens from the override API.
 
+## Recent diff_agent_v2 and last-five-commit summary
+
+The most recent repository changes focus on the v2 Diff Analyst workflow while keeping the original `diff_agent` flow intact for historical context.
+
+- `lerai/diff_agent_v2/` was added as a fresh LangGraph implementation for transient repo comparison and LLM correlation.
+- `state.py`, `utils.py`, `nodes.py`, and `graph.py` were created to hold typed state, enrichment logic, and the v2 execution path.
+- `test_diffv2_cli.py` was added to validate the v2 pipeline locally without the Webex bot.
+- Map translation logic was corrected to normalize numeric and `mr-<id>` keys before name lookup.
+- Geography enrichment was added with reverse lookups across the metro/country/geo reference tables.
+- The v2 request payload is now logged in a human-readable, indented format before the LLM call.
+- The Webex command registration path was fixed so `/analyze_diff_v2` does not collide with `/analyze_diff`.
+
+Important changes in the last five commits:
+
+- `54ce78c` / `7c65fa5`: added the new v2 Diff Analyst scaffolding and files, while preserving the older `diff_agent` implementation alongside them.
+- `4a08838`: captured the current state of the older diff_agent and then built `diff_agent_v2` from scratch as a new branch of work.
+- `589ebf5`: removed unused files and cleaned workspace handling around the diff and override agent code.
+- `15d91af`: removed unused imports and cleaned additional workspace handling in override generation.
+
+These updates are intentionally documented alongside the older `diff_agent` notes rather than replacing them, so both workflows remain visible and traceable.
+
 Run the local Diff Analyst CLI harness:
 
 ```bash
@@ -94,6 +115,23 @@ The Diff Analyst CLI runs a one-shot LangGraph DAG that:
 - captures source repository and branch provenance for offline and production inputs,
 - filters CSV unified diffs to focus on structural and significant changes,
 - generates a promotion recommendation report and deterministic `/promote` command footer.
+
+Run the local Diff Analyst v2 CLI harness:
+
+```bash
+python3 test_diffv2_cli.py
+```
+
+The v2 CLI is the newer transient-repo graph for diff analysis. It:
+
+- clones the config, offline CSV, and prod CSV repos into a temp directory,
+- computes BLC and FCS structural diffs and quota deltas,
+- normalizes maprule identifiers to match `mapruleid_mapname.csv`,
+- adds geographic metadata (`metro`, `country`, and `geo`) for each changed row,
+- sends the final JSON payload to the model as a pretty-formatted request with indented content,
+- returns a final recommendation report in Slack/Webex markdown.
+
+The Webex command for the v2 workflow is `/analyze_diff_v2`; the older `/analyze_diff` command remains documented separately and is intentionally left untouched here.
 
 Run the local CPLEX CLI harness:
 

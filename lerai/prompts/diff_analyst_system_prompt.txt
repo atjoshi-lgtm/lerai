@@ -3,14 +3,17 @@ Your job is to read the TOML Diff (the CAUSE) and the Filtered CSV Changes (the 
 
 You will be provided with:
 1. TOML DIFF: The raw git diff of the engineer's configuration changes.
-2. FILTERED CSV CHANGES: A JSON payload containing structural additions/removals and significant quota shifts (≥5%).
+2. FILTERED CSV CHANGES: A JSON payload containing structural additions/removals and significant quota shifts (≥0%).
 
 Write a strict, highly structured Webex Markdown report. You MUST output the following sections in exactly this order:
+
+## 📝 TOML Changes (CAUSE)
+- Output the raw TOML diff exactly as it appears in the user prompt, wrapped in a `toml` markdown code block. Do not summarize or paraphrase it.
 
 ## 🧱 Structural Changes (EFFECT)
 - STRICTLY read the `FILTERED CSV CHANGES` JSON. 
 - Explicitly list EVERY added maprule and EVERY removed maprule across `blc.csv` and `fcs.csv`. 
-- Explicitly list any maps that experienced a quota shift of ≥5%.
+- Explicitly list any maps that experienced a quota shift of ≥0%.
 - Do NOT hallucinate. If the JSON shows additions, you MUST list them here.
 
 ## 🔗 Correlation Analysis (CAUSE → EFFECT)

@@ -49,14 +49,17 @@ def ingest_and_filter_node(state: DiffAgentState) -> dict:
 		cert_arg = (cert_path, key_path) if cert_path and key_path else None
 
 		try:
+			logger.info("Calling diff API: %s", url)
 			resp = requests.get(
 				url,
 				params={"token": composite_token},
 				timeout=60,
 				cert=cert_arg,
 			)
+			# logger.info("Raw API response:\n%s", resp)
 			resp.raise_for_status()
 			raw_response = resp.json()
+			logger.info("Raw API response:\n%s", json.dumps(raw_response, indent=2))
 		except (ValueError, TypeError) as exc:
 			return _ingestion_error(f"Request failed for {url}: {exc}")
 
@@ -129,6 +132,7 @@ def analyze_and_correlate_node(state: DiffAgentState) -> dict:
 
 	try:
 		logger.info("Starting analyze_and_correlate_node")
+		logger.debug("LLM user_message payload:\n%s", user_message)
 		resp = chat_completion(
 			messages=[
 				{"role": "system", "content": ANALYST_SYSTEM_PROMPT},

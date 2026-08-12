@@ -10,10 +10,10 @@ import sys
 import uuid
 
 
-os.makedirs("logs/test_cli", exist_ok=True)
+os.makedirs("logs/test_diff_cli", exist_ok=True)
 _log_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-_info_log = os.path.join("logs/test_cli", f"diff_agent_{_log_ts}.log")
-_debug_log = os.path.join("logs/test_cli", f"diff_agent_{_log_ts}.debug.log")
+_info_log = os.path.join("logs/test_diff_cli", f"diff_agent_{_log_ts}.log")
+_debug_log = os.path.join("logs/test_diff_cli", f"diff_agent_{_log_ts}.debug.log")
 
 _fmt = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s - %(message)s",

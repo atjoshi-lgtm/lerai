@@ -71,7 +71,7 @@ def filter_csv_diff(diff_text: str) -> dict:
                 }
             )
 
-    logger.debug(
+    logger.info(
         "Filtered CSV diff (added=%d, removed=%d, modified=%d, threshold_pct=%.2f)",
         len(result["added"]),
         len(result["removed"]),

@@ -6,9 +6,13 @@ Here is a comprehensive and structured API specification designed specifically t
 
 This document outlines the strict technical requirements, workflows, and parsing instructions for interacting with the LeRAI backend API. The backend orchestrates network configuration overrides via Git branches and a CPLEX quota computation engine.
 
+The override workflow is state-locked. The base token identifies the production `override.toml` commit read at the start. After a successful offline run, the returned composite token records the complete state represented by the offline results: the production and `offline_test_branch` `override.toml` commits, plus the `blc.csv`, `fcs.csv`, and `expected_offload.csv` commits in both the offline_manual and production repositories. The same composite token is passed through diff verification and promotion so promotion can verify that this state has not changed.
+
 ## 1. Core Workflow & Endpoint Specifications
 
-The override process strictly follows a sequential, state-locked four-step flow. Concurrency is prevented by passing SHA-256 state tokens between endpoints.
+The override process strictly follows a sequential, state-locked four-step flow. Concurrency is prevented by passing state tokens between endpoints. The token flow is:
+
+`base_token` (production `override.toml` commit) -> `composite_token` (returned after the offline run) -> same `composite_token` for diff verification -> same token for promotion.
 
 ### Step 1: Fetch Base State
 
@@ -27,7 +31,7 @@ Retrieve the current `override.toml` file from production and its associated sta
 ```
 
 
-* ⚠️ **Critical Parsing Instruction for AI:** The backend does not serialize the underlying script's output as JSON; it returns a stringified Python dictionary in the `stdout` field. You **must** parse the `stdout` string (e.g., using `ast.literal_eval` or regex) to extract the `token` (this becomes the `base_token`) and the `override` text.
+* ⚠️ **Critical Parsing Instruction for AI:** The backend does not serialize the underlying script's output as JSON; it returns a stringified Python dictionary in the `stdout` field. You **must** parse the `stdout` string (e.g., using `ast.literal_eval`) to extract the `token` (the `base_token`, representing the last production `override.toml` commit) and the `override` text.
 
 ### Step 2: Submit Overrides & Run Computation
 
@@ -61,7 +65,7 @@ Submit the modified TOML file to trigger the CPLEX computation.
 {
   "success": true,
   "returncode": 0,
-  "token": "<new composite_token>",
+  "token": "<composite_token>",
   "offline_diff": "...",
   "offline_run_errors": [],
   "offline_run_log": "..."
@@ -89,7 +93,7 @@ Submit the modified TOML file to trigger the CPLEX computation.
    - If `stdout` is missing/empty but the response JSON itself contains offline override fields (`success`, `returncode`, `offline_run_errors`, etc.), treat the JSON payload as the result directly.
 2. **Success Detection:** Check the `success` field (or coerce it if it's a string "true"/"false"). If `success` is `False` or missing with a non-zero `returncode`, treat it as a failure.
 3. **Upstream Errors:** When `success` is `False`, preserve and surface all available diagnostics (`message`, `offline_run_errors`, `stderr`, `offline_run_log`, and `returncode`) in the failure payload returned to the agent.
-4. **Token Extraction:** When successful, capture the returned `token` field (this is the composite token) for use in Step 3.
+4. **Token Extraction:** When successful, capture the returned `token` field as the `composite_token` for use in Step 3. This token ties together the production `override.toml` commit, the `offline_test_branch` `override.toml` commit, and the three offline and three production output-file commits (`blc.csv`, `fcs.csv`, and `expected_offload.csv`).
 
 ### Error Payload Truncation Standard
 
@@ -121,7 +125,7 @@ Generate a structured difference between the newly generated offline CSVs and th
 ```json
 {
   "returncode": 0,
-  "token": "<new_promotion_token>",
+  "token": "<composite_token>",
   "diff": {
     "blc.csv": {"filename": "blc.csv", "diff": "...", "offline_last_modified": "..."},
     "fcs.csv": {"filename": "fcs.csv", "diff": "...", "offline_last_modified": "..."},
@@ -134,7 +138,7 @@ Generate a structured difference between the newly generated offline CSVs and th
 ```
 
 
-* ⚠️ **Critical Parsing Instructions for AI:** 1.  **Token Rotation:** This endpoint validates the state and generates a *brand new token* combining offline and production outputs. You **must** capture this new `token` for Step 4; do not reuse the composite token from Step 2.
+* ⚠️ **Critical Parsing Instructions for AI:** 1. **Token Preservation:** This endpoint validates the state represented by the `composite_token` and returns that same token. Capture the returned `token` as the `promotion_token` for Step 4; do not create or expect a new token at this stage. Promotion uses it to verify that the production and offline commits examined during diff verification are still the current state.
 2.  **Graceful Degradation:** The backend attempts to safely evaluate the CSV diff output. If the underlying Python script prints unexpected tracebacks, `diff` will degrade from a nested JSON Object into a raw String. Always check the data type of the `diff` key before iterating over it.
 3.  **Per-File Errors:** If a specific CSV fails to diff, its object inside the `diff` dictionary will contain an `"error"` key instead of a `"diff"` key (e.g., `"error": "Error processing file:..."`).
 
@@ -144,7 +148,7 @@ Promote the offline changes to production.
 
 * **Endpoint:** `GET /v1/promote`
 * **Query Parameters:**
-* `token`: `<new_promotion_token extracted from Step 3>`
+* `token`: `<promotion_token returned from Step 3; the same composite token from Step 2>`
 
 
 * **Response Schema:**
